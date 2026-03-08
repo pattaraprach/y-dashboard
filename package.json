@@ -6,12 +6,20 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "sync:woo": "ts-node scripts/database/woocommerce-sync.ts",
+    "sync:woo:pickup": "ts-node scripts/database/woocommerce-sync.ts --pickup-only",
+    "delete:cadnye2631": "ts-node scripts/database/delete-cadnye2631.ts"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.9.0",
+    "@supabase/supabase-js": "^2.86.2",
+    "clsx": "^2.1.1",
+    "dotenv": "^17.3.1",
     "next": "16.0.7",
     "react": "19.2.0",
-    "react-dom": "19.2.0"
+    "react-dom": "19.2.0",
+    "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -22,6 +30,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.0.7",
     "tailwindcss": "^4",
+    "ts-node": "^10.9.2",
     "typescript": "^5"
   }
 }
