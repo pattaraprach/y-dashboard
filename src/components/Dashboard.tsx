@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import { formatCurrency, formatNumber } from '@/lib/utils'
 import { EventNav } from '@/components/EventNav'
-import { PriceSync } from '@/components/PriceSync'
 import { MetricCard } from '@/components/dashboard/MetricCard'
 import { EventBreakdown } from '@/components/dashboard/EventBreakdown'
 import { DailyChart } from '@/components/dashboard/DailyChart'
@@ -531,15 +530,6 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
       {/* Monthly Summary Section */}
       <section className="mb-8">
         <MonthlySummary data={monthlySummary} isLoading={isLoading} />
-      </section>
-
-      {/* Price Sync Section */}
-      <section className="mb-8">
-        <PriceSync
-          eventCode={eventCode}
-          eventName={eventName}
-          onSyncComplete={fetchData}
-        />
       </section>
 
       {/* Orders Section */}
