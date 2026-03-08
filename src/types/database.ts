@@ -127,8 +127,6 @@ export interface EventDaySummary {
     totalOrders: number
     totalAmount: number
     totalCommission: number
-    totalAttendees: number
-    rshAttendees: number
 }
 
 export interface MonthlySummary {
