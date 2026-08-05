@@ -1,0 +1,14 @@
+scripts/database/README.md
+  h_ec7c44b8f8b0cd 71-86,89,96-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.20",
+  "base_commit_sha": "365656114a7d2ef4ba394664eba2771374a1fcad",
+  "prompts": {},
+  "humans": {
+    "h_ec7c44b8f8b0cd": {
+      "author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
