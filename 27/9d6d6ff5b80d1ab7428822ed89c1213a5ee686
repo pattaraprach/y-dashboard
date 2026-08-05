@@ -1,0 +1,16 @@
+src/lib/supabase-server.ts
+  h_ec7c44b8f8b0cd 21
+src/proxy.ts
+  h_ec7c44b8f8b0cd 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.20",
+  "base_commit_sha": "279d6d6ff5b80d1ab7428822ed89c1213a5ee686",
+  "prompts": {},
+  "humans": {
+    "h_ec7c44b8f8b0cd": {
+      "author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
