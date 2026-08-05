@@ -1,0 +1,14 @@
+src/components/orders/OrderModal.tsx
+  h_ec7c44b8f8b0cd 142-149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.20",
+  "base_commit_sha": "a80df102dc22aca01a1f119f757acd9886be9ad7",
+  "prompts": {},
+  "humans": {
+    "h_ec7c44b8f8b0cd": {
+      "author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
