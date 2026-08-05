@@ -1,0 +1,14 @@
+src/types/database.ts
+  h_ec7c44b8f8b0cd 31-38,43-76,117-118,123-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.20",
+  "base_commit_sha": "51e9a3cf9a4d7a6ef4b1682a257dd3b0d7c56894",
+  "prompts": {},
+  "humans": {
+    "h_ec7c44b8f8b0cd": {
+      "author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
