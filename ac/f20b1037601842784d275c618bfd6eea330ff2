@@ -1,0 +1,16 @@
+scripts/database/README.md
+  h_ec7c44b8f8b0cd 71-86,92-93
+scripts/database/enable-rls.sql
+  h_ec7c44b8f8b0cd 1-231
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.20",
+  "base_commit_sha": "acf20b1037601842784d275c618bfd6eea330ff2",
+  "prompts": {},
+  "humans": {
+    "h_ec7c44b8f8b0cd": {
+      "author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
