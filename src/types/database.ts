@@ -28,9 +28,51 @@ export type Database = {
                     quantity: number | null
                     pickup_type: string | null
                     pickup_link: string | null
+                    amount_refunded: number
+                    amount_net: number | null
+                    woo_status: string | null
+                    refund_status: 'none' | 'partial' | 'full'
+                    cancel_source: 'woo' | 'dashboard' | 'system' | null
+                    cancelled_at: string | null
+                    refunded_at: string | null
+                    last_synced_at: string | null
                 }
                 Insert: Omit<Database['public']['Tables']['cad_yip_bookings']['Row'], 'id' | 'created_at'>
                 Update: Partial<Database['public']['Tables']['cad_yip_bookings']['Row']>
+            }
+            cad_yip_refunds: {
+                Row: {
+                    id: number
+                    created_at: string
+                    woo_order_id: number
+                    woo_refund_id: number
+                    woo_status: string | null
+                    amount: number
+                    reason: string | null
+                    refunded_at: string | null
+                    refunded_by: number | null
+                    refunded_payment: boolean | null
+                    raw: Record<string, unknown> | null
+                }
+                Insert: Omit<Database['public']['Tables']['cad_yip_refunds']['Row'], 'id' | 'created_at'>
+                Update: Partial<Database['public']['Tables']['cad_yip_refunds']['Row']>
+            }
+            cad_yip_refund_items: {
+                Row: {
+                    id: number
+                    created_at: string
+                    refund_id: number
+                    woo_refund_id: number
+                    woo_order_id: number
+                    woo_line_item_id: number | null
+                    sku: string | null
+                    product_name: string | null
+                    quantity: number | null
+                    line_total: number
+                    booking_id: number | null
+                }
+                Insert: Omit<Database['public']['Tables']['cad_yip_refund_items']['Row'], 'id' | 'created_at'>
+                Update: Partial<Database['public']['Tables']['cad_yip_refund_items']['Row']>
             }
             cad_yip_attendees: {
                 Row: {
@@ -72,9 +114,14 @@ export type Database = {
 }
 
 export type Booking = Database['public']['Tables']['cad_yip_bookings']['Row']
+export type Refund = Database['public']['Tables']['cad_yip_refunds']['Row']
+export type RefundItem = Database['public']['Tables']['cad_yip_refund_items']['Row']
 export type Attendee = Database['public']['Tables']['cad_yip_attendees']['Row']
 export type Link = Database['public']['Tables']['cad_yip_links']['Row']
 export type Price = Database['public']['Tables']['cad_yip_prices']['Row']
+
+export type RefundStatus = Booking['refund_status']
+export type CancelSource = NonNullable<Booking['cancel_source']>
 
 /** Nested attendee shape returned from Supabase selects */
 export type AttendeeName = Pick<Attendee, 'id' | 'attendee_firstname' | 'attendee_lastname'>
