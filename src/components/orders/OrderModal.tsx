@@ -139,7 +139,14 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
       return
     }
 
-    setIsCancelled(next)
+    if (next) {
+      setIsCancelled(true)
+    } else if (booking.refund_status && booking.refund_status !== 'none') {
+      setIsCancelled(true)
+      setError('This booking still has Woo refund evidence and stays cancelled.')
+    } else {
+      setIsCancelled(false)
+    }
     onUpdate()
   }
 
