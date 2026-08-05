@@ -24,6 +24,10 @@ export type Database = {
                     zone_code: string | null
                     zone: string | null
                     event_type: string | null
+                    is_cancelled: boolean
+                    quantity: number | null
+                    pickup_type: string | null
+                    pickup_link: string | null
                 }
                 Insert: Omit<Database['public']['Tables']['cad_yip_bookings']['Row'], 'id' | 'created_at'>
                 Update: Partial<Database['public']['Tables']['cad_yip_bookings']['Row']>
@@ -72,9 +76,40 @@ export type Attendee = Database['public']['Tables']['cad_yip_attendees']['Row']
 export type Link = Database['public']['Tables']['cad_yip_links']['Row']
 export type Price = Database['public']['Tables']['cad_yip_prices']['Row']
 
+/** Nested attendee shape returned from Supabase selects */
+export type AttendeeName = Pick<Attendee, 'id' | 'attendee_firstname' | 'attendee_lastname'>
+
+export type BookingWithAttendees = Booking & {
+    cad_yip_attendees?: AttendeeName[] | null
+}
+
 export type BookingWithDetails = Booking & {
     attendees: Attendee[]
     links: Link[]
+}
+
+/** One booking party for grouped export (attendees share seat/pickup) */
+export interface ExportParty {
+    orderId: number | null
+    seat: string
+    pickup: string
+    eventDate: string | null
+    isRsh: boolean
+    isCancelled: boolean
+    names: string[]
+}
+
+/** Flattened row for CSV (one attendee; group via orderId / partySize / attendeeIndex) */
+export interface BookingExportRow {
+    orderId: number | null
+    partySize: number
+    attendeeIndex: number
+    name: string
+    seat: string
+    pickup: string
+    eventDate: string | null
+    isRsh: boolean
+    isCancelled: boolean
 }
 
 export interface DashboardMetrics {

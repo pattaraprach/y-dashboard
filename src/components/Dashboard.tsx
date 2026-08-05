@@ -2,7 +2,13 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
-import { formatCurrency, formatNumber } from '@/lib/utils'
+import {
+  buildBookingExportCsv,
+  buildGroupedExportText,
+  downloadCsv,
+  formatCurrency,
+  formatNumber,
+} from '@/lib/utils'
 import { EventNav } from '@/components/EventNav'
 import { MetricCard } from '@/components/dashboard/MetricCard'
 import { EventBreakdown } from '@/components/dashboard/EventBreakdown'
@@ -10,7 +16,14 @@ import { DailyChart } from '@/components/dashboard/DailyChart'
 import { MonthlySummary } from '@/components/dashboard/MonthlySummary'
 import { OrdersTable } from '@/components/orders/OrdersTable'
 import { OrderModal } from '@/components/orders/OrderModal'
-import type { Booking, DashboardMetrics, EventMetrics, DailyMetrics, HourlyMetrics, MonthlySummary as MonthlySummaryType } from '@/types/database'
+import type {
+  BookingWithAttendees,
+  DashboardMetrics,
+  EventMetrics,
+  DailyMetrics,
+  HourlyMetrics,
+  MonthlySummary as MonthlySummaryType,
+} from '@/types/database'
 
 interface DashboardProps {
   eventCode: 'CADCNX' | 'CADNYE'
@@ -69,6 +82,7 @@ const RSHIcon = () => (
 const ITEMS_PER_PAGE = 25
 
 type RshFilter = 'all' | 'rsh' | 'non-rsh'
+type StatusFilter = 'active' | 'cancelled' | 'all'
 
 export default function Dashboard({ eventCode, eventName }: DashboardProps) {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
@@ -76,13 +90,14 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
   const [dailyMetrics, setDailyMetrics] = useState<DailyMetrics[]>([])
   const [hourlyMetrics, setHourlyMetrics] = useState<HourlyMetrics[]>([])
   const [monthlySummary, setMonthlySummary] = useState<MonthlySummaryType[]>([])
-  const [allBookings, setAllBookings] = useState<Booking[]>([])
-  const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null)
+  const [allBookings, setAllBookings] = useState<BookingWithAttendees[]>([])
+  const [selectedBooking, setSelectedBooking] = useState<BookingWithAttendees | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
   // Search and filter state
   const [searchTerm, setSearchTerm] = useState('')
   const [rshFilter, setRshFilter] = useState<RshFilter>('all')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('active')
   const [eventDateFilter, setEventDateFilter] = useState('')
   const [availableEventDates, setAvailableEventDates] = useState<string[]>([])
 
@@ -110,11 +125,7 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
     setIsLoading(true)
 
     try {
-      // Fetch ALL bookings from database in batches
-      // Fetch bookings WITH attendees to ensure data consistency
-      // Using nested select: *, cad_yip_attendees(id) will return the attendees for each booking
-
-      type BookingWithAttendees = Booking & { cad_yip_attendees: { id: number }[] }
+      // Fetch ALL bookings with full attendee names (needed for per-person export)
       const allBookings: BookingWithAttendees[] = []
       const BATCH_SIZE = 1000
       let offset = 0
@@ -124,7 +135,7 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
       while (hasMore) {
         const { data: batchData, error: batchError } = await supabase
           .from('cad_yip_bookings')
-          .select('*, cad_yip_attendees(id)')
+          .select('*, cad_yip_attendees(id, attendee_firstname, attendee_lastname)')
           .order('created_at', { ascending: false })
           .range(offset, offset + BATCH_SIZE - 1)
 
@@ -145,6 +156,9 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
 
       setAllBookings(fetchedBookings)
 
+      // Metrics exclude cancelled bookings so totals stay operationally accurate
+      const activeBookings = fetchedBookings.filter(b => !b.is_cancelled)
+
       // Calculate attendees by booking from the nested data
       const attendeesByBooking = new Map<number, number>()
       fetchedBookings.forEach((b) => {
@@ -153,20 +167,20 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
         attendeesByBooking.set(b.id, count)
       })
 
-      // Calculate aggregated metrics
-      const totalOrders = fetchedBookings.length
-      const totalGuests = fetchedBookings.reduce((sum, b) => sum + (b.cad_yip_attendees?.length || 0), 0)
-      const totalAmount = fetchedBookings.reduce((sum, b) => sum + Number(b.amount), 0)
-      const totalCommission = fetchedBookings.reduce((sum, b) => sum + Number(b.commission), 0)
-      const totalFees = fetchedBookings.reduce((sum, b) => sum + Number(b.fees), 0)
+      // Calculate aggregated metrics (active only)
+      const totalOrders = activeBookings.length
+      const totalGuests = activeBookings.reduce((sum, b) => sum + (b.cad_yip_attendees?.length || 0), 0)
+      const totalAmount = activeBookings.reduce((sum, b) => sum + Number(b.amount), 0)
+      const totalCommission = activeBookings.reduce((sum, b) => sum + Number(b.commission), 0)
+      const totalFees = activeBookings.reduce((sum, b) => sum + Number(b.fees), 0)
       const totalProfit = totalCommission - totalFees
       const estimatedProfitAfterVAT = totalProfit * 0.93
-      const rshAttendees = fetchedBookings
+      const rshAttendees = activeBookings
         .filter(b => b.is_rsh_transfer)
         .reduce((sum, b) => sum + (b.cad_yip_attendees?.length || 0), 0)
 
       const rshByDayMap = new Map<string, number>()
-      fetchedBookings
+      activeBookings
         .filter(b => b.is_rsh_transfer)
         .forEach(b => {
           const day = b.event_date || 'Unknown'
@@ -191,7 +205,7 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
       // Calculate event metrics
       const eventMap = new Map<string, { guests: number; orders: number; amount: number; commission: number }>()
 
-      fetchedBookings.forEach((booking) => {
+      activeBookings.forEach((booking) => {
         const eventType = booking.event_type || 'Unknown'
         const current = eventMap.get(eventType) || { guests: 0, orders: 0, amount: 0, commission: 0 }
         const guestCount = attendeesByBooking.get(booking.id) || 0
@@ -218,7 +232,7 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
       // Calculate daily booking counts by date entered (created_at)
       const dailyMap = new Map<string, { guests: number; orders: number; rshOrders: number; nonRshOrders: number }>()
 
-      fetchedBookings.forEach((booking) => {
+      activeBookings.forEach((booking) => {
         if (!booking.created_at) return
         const date = booking.created_at.split('T')[0]
         const current = dailyMap.get(date) || { guests: 0, orders: 0, rshOrders: 0, nonRshOrders: 0 }
@@ -252,7 +266,7 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
         const label = new Date(slotStart).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 
         let totalOrders = 0, rshOrders = 0, nonRshOrders = 0, totalGuests = 0
-        fetchedBookings.forEach(b => {
+        activeBookings.forEach(b => {
           if (!b.created_at) return
           const ts = new Date(b.created_at).getTime()
           if (ts >= slotStart && ts < slotEnd) {
@@ -271,7 +285,7 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
       // Group bookings by month (based on created_at) and event date
       const monthlyMap = new Map<string, Map<string, Map<string, { sku: string; eventType: string; quantity: number; totalAmount: number; totalCommission: number }>>>()
 
-      fetchedBookings.forEach((booking) => {
+      activeBookings.forEach((booking) => {
         if (!booking.created_at) return
 
         // Use created_at to determine the month
@@ -364,48 +378,75 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
   }, [eventCode])
 
   useEffect(() => {
-    fetchData()
+    // Defer so setState inside fetchData is not synchronous in the effect body
+    // (react-hooks/set-state-in-effect).
+    let cancelled = false
+    const timer = setTimeout(() => {
+      if (!cancelled) void fetchData()
+    }, 0)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
   }, [fetchData])
 
-  // Client-side filtering - filter bookings based on all criteria
-  const filteredBookings = useMemo(() => {
-    let result = allBookings
+  /**
+   * Shared filter for table + export.
+   * rshOnly: force RSH transfer (for Export RSH); otherwise use transfer filter.
+   */
+  const filterBookings = useCallback(
+    (options?: { rshOnly?: boolean }) => {
+      let result = allBookings
 
-    // Apply RSH Transfer filter
-    if (rshFilter === 'rsh') {
-      result = result.filter(b => b.is_rsh_transfer === true)
-    } else if (rshFilter === 'non-rsh') {
-      result = result.filter(b => b.is_rsh_transfer === false)
-    }
+      if (statusFilter === 'active') {
+        result = result.filter((b) => !b.is_cancelled)
+      } else if (statusFilter === 'cancelled') {
+        result = result.filter((b) => b.is_cancelled === true)
+      }
 
-    // Apply Event Date filter
-    if (eventDateFilter) {
-      result = result.filter(b => b.event_date === eventDateFilter)
-    }
+      if (options?.rshOnly) {
+        result = result.filter((b) => b.is_rsh_transfer === true)
+      } else if (rshFilter === 'rsh') {
+        result = result.filter((b) => b.is_rsh_transfer === true)
+      } else if (rshFilter === 'non-rsh') {
+        result = result.filter((b) => b.is_rsh_transfer === false)
+      }
 
-    // Apply search filter (client-side full-text search)
-    if (searchTerm) {
-      const searchLower = searchTerm.toLowerCase().trim()
-      result = result.filter(booking => {
-        const searchableFields = [
-          booking.woo_id?.toString() || '',
-          booking.firstname || '',
-          booking.lastname || '',
-          booking.email || '',
-          booking.seat || '',
-          booking.pickup_loc || '',
-          booking.event_date || '',
-          booking.zone_code || '',
-          booking.zone || '',
-        ]
-        return searchableFields.some(field =>
-          field.toLowerCase().includes(searchLower)
-        )
-      })
-    }
+      if (eventDateFilter) {
+        result = result.filter((b) => b.event_date === eventDateFilter)
+      }
 
-    return result
-  }, [allBookings, rshFilter, eventDateFilter, searchTerm])
+      if (searchTerm) {
+        const searchLower = searchTerm.toLowerCase().trim()
+        result = result.filter((booking) => {
+          const searchableFields = [
+            booking.woo_id?.toString() || '',
+            booking.firstname || '',
+            booking.lastname || '',
+            booking.email || '',
+            booking.seat || '',
+            booking.pickup_loc || '',
+            booking.event_date || '',
+            booking.zone_code || '',
+            booking.zone || '',
+          ]
+          return searchableFields.some((field) =>
+            field.toLowerCase().includes(searchLower)
+          )
+        })
+      }
+
+      return result
+    },
+    [allBookings, statusFilter, rshFilter, eventDateFilter, searchTerm]
+  )
+
+  const filteredBookings = useMemo(() => filterBookings(), [filterBookings])
+
+  const rshExportBookings = useMemo(
+    () => filterBookings({ rshOnly: true }),
+    [filterBookings]
+  )
 
   // Paginate the filtered results
   const totalCount = filteredBookings.length
@@ -417,25 +458,69 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
     return filteredBookings.slice(startIndex, endIndex)
   }, [filteredBookings, currentPage])
 
-  // Reset to page 1 when filters change
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [rshFilter, eventDateFilter, searchTerm])
-
   const handlePageChange = (page: number) => {
     if (page >= 1 && page <= totalPages) {
       setCurrentPage(page)
     }
   }
 
+  const handleSearchChange = (value: string) => {
+    setSearchTerm(value)
+    setCurrentPage(1)
+  }
+
+  const handleRshFilterChange = (filter: RshFilter) => {
+    setRshFilter(filter)
+    setCurrentPage(1)
+  }
+
+  const handleStatusFilterChange = (filter: StatusFilter) => {
+    setStatusFilter(filter)
+    setCurrentPage(1)
+  }
+
+  const handleEventDateFilterChange = (value: string) => {
+    setEventDateFilter(value)
+    setCurrentPage(1)
+  }
+
   const clearFilters = () => {
     setSearchTerm('')
     setRshFilter('all')
+    setStatusFilter('active')
     setEventDateFilter('')
     setCurrentPage(1)
   }
 
-  const hasActiveFilters = searchTerm || rshFilter !== 'all' || eventDateFilter
+  const handleExport = () => {
+    if (filteredBookings.length === 0) return
+    const csv = buildBookingExportCsv(filteredBookings)
+    const dateStamp = new Date().toISOString().slice(0, 10)
+    downloadCsv(`${eventCode.toLowerCase()}-bookings-${dateStamp}.csv`, csv)
+  }
+
+  const handleExportRsh = () => {
+    if (rshExportBookings.length === 0) {
+      window.alert('No RSH transfer bookings match the current filters (status / date / search).')
+      return
+    }
+    const csv = buildBookingExportCsv(rshExportBookings)
+    const dateStamp = new Date().toISOString().slice(0, 10)
+    downloadCsv(`${eventCode.toLowerCase()}-rsh-${dateStamp}.csv`, csv)
+  }
+
+  const handleCopyGrouped = async () => {
+    if (filteredBookings.length === 0) return
+    const text = buildGroupedExportText(filteredBookings)
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch (err) {
+      console.error('Copy failed:', err)
+    }
+  }
+
+  const hasActiveFilters =
+    searchTerm || rshFilter !== 'all' || statusFilter !== 'active' || eventDateFilter
 
   // Format date for display
   const formatDateDisplay = (dateStr: string) => {
@@ -540,38 +625,103 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
             <h2 className="text-xl font-semibold text-[var(--foreground)]">
               Orders
             </h2>
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Search by ID, name, email, seat, pickup, date..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="input pl-10 w-full sm:w-96"
-              />
-              <svg
-                className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--foreground-muted)]"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search by ID, name, email, seat, pickup, date..."
+                  value={searchTerm}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  className="input pl-10 w-full sm:w-80"
                 />
-              </svg>
+                <svg
+                  className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--foreground-muted)]"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  />
+                </svg>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleCopyGrouped()}
+                  disabled={filteredBookings.length === 0}
+                  className="btn btn-secondary text-sm whitespace-nowrap disabled:opacity-50"
+                  title="Copy parties: order header (incl. Active/Cancelled) + attendee names"
+                >
+                  Copy parties
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExport}
+                  disabled={filteredBookings.length === 0}
+                  className="btn btn-primary text-sm whitespace-nowrap disabled:opacity-50"
+                  title="CSV: one row per attendee, grouped by Order ID, with Status column"
+                >
+                  Export CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportRsh}
+                  disabled={rshExportBookings.length === 0}
+                  className="btn btn-secondary text-sm whitespace-nowrap disabled:opacity-50"
+                  title="RSH only; respects Status filter (default Active = no cancelled)"
+                >
+                  Export RSH
+                </button>
+              </div>
             </div>
           </div>
 
           {/* Filters Row */}
           <div className="flex flex-wrap items-center gap-4">
+            {/* Status Filter */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-[var(--foreground-secondary)]">Status:</span>
+              <div className="flex rounded-lg overflow-hidden border border-[var(--border)]">
+                <button
+                  onClick={() => handleStatusFilterChange('active')}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${statusFilter === 'active'
+                    ? 'bg-[var(--primary)] text-white'
+                    : 'bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)]'
+                    }`}
+                >
+                  Active
+                </button>
+                <button
+                  onClick={() => handleStatusFilterChange('cancelled')}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors border-x border-[var(--border)] ${statusFilter === 'cancelled'
+                    ? 'bg-[var(--primary)] text-white'
+                    : 'bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)]'
+                    }`}
+                >
+                  Cancelled
+                </button>
+                <button
+                  onClick={() => handleStatusFilterChange('all')}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${statusFilter === 'all'
+                    ? 'bg-[var(--primary)] text-white'
+                    : 'bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)]'
+                    }`}
+                >
+                  All
+                </button>
+              </div>
+            </div>
+
             {/* RSH Transfer Filter */}
             <div className="flex items-center gap-2">
               <span className="text-sm text-[var(--foreground-secondary)]">Transfer:</span>
               <div className="flex rounded-lg overflow-hidden border border-[var(--border)]">
                 <button
-                  onClick={() => setRshFilter('all')}
+                  onClick={() => handleRshFilterChange('all')}
                   className={`px-3 py-1.5 text-sm font-medium transition-colors ${rshFilter === 'all'
                     ? 'bg-[var(--primary)] text-white'
                     : 'bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)]'
@@ -580,7 +730,7 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
                   All
                 </button>
                 <button
-                  onClick={() => setRshFilter('rsh')}
+                  onClick={() => handleRshFilterChange('rsh')}
                   className={`px-3 py-1.5 text-sm font-medium transition-colors border-x border-[var(--border)] ${rshFilter === 'rsh'
                     ? 'bg-[var(--primary)] text-white'
                     : 'bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)]'
@@ -589,7 +739,7 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
                   RSH Only
                 </button>
                 <button
-                  onClick={() => setRshFilter('non-rsh')}
+                  onClick={() => handleRshFilterChange('non-rsh')}
                   className={`px-3 py-1.5 text-sm font-medium transition-colors ${rshFilter === 'non-rsh'
                     ? 'bg-[var(--primary)] text-white'
                     : 'bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)]'
@@ -605,7 +755,7 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
               <span className="text-sm text-[var(--foreground-secondary)]">Event Date:</span>
               <select
                 value={eventDateFilter}
-                onChange={(e) => setEventDateFilter(e.target.value)}
+                onChange={(e) => handleEventDateFilterChange(e.target.value)}
                 className="input py-1.5 text-sm min-w-[180px]"
               >
                 <option value="">All Dates</option>
@@ -710,6 +860,7 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
       {/* Order Modal */}
       {selectedBooking && (
         <OrderModal
+          key={selectedBooking.id}
           booking={selectedBooking}
           onClose={() => setSelectedBooking(null)}
           onUpdate={fetchData}

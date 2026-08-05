@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import type { Booking, Price } from '@/types/database'
+import type { Price } from '@/types/database'
 
 interface PriceSyncProps {
   eventCode: 'CADCNX' | 'CADNYE'

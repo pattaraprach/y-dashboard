@@ -2,11 +2,17 @@
 
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
-import { formatCurrency, formatDate } from '@/lib/utils'
-import type { Booking, Attendee } from '@/types/database'
+import {
+    buildGroupedExportText,
+    formatAttendeeName,
+    formatCurrency,
+    formatCustomerName,
+    formatDate,
+} from '@/lib/utils'
+import type { Attendee, BookingWithAttendees } from '@/types/database'
 
 interface OrderModalProps {
-    booking: Booking | null
+    booking: BookingWithAttendees | null
     onClose: () => void
     onUpdate: () => void
 }
@@ -14,29 +20,37 @@ interface OrderModalProps {
 export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
     const [seat, setSeat] = useState(booking?.seat || '')
     const [pickupLoc, setPickupLoc] = useState(booking?.pickup_loc || '')
+    const [isCancelled, setIsCancelled] = useState(booking?.is_cancelled ?? false)
     const [isSaving, setIsSaving] = useState(false)
+    const [isTogglingCancel, setIsTogglingCancel] = useState(false)
     const [attendees, setAttendees] = useState<Attendee[]>([])
     const [error, setError] = useState<string | null>(null)
+    const [copyFeedback, setCopyFeedback] = useState<string | null>(null)
 
     useEffect(() => {
-        async function fetchAttendees() {
-            if (!booking) return
+        if (!booking) return
 
-            const { data, error } = await supabase
-                .from('cad_yip_attendees')
-                .select('*')
-                .eq('booking_id', booking.id)
-                .order('id')
+        let cancelled = false
+        const timer = setTimeout(() => {
+            void (async () => {
+                const { data, error } = await supabase
+                    .from('cad_yip_attendees')
+                    .select('*')
+                    .eq('booking_id', booking.id)
+                    .order('id')
 
-            if (error) {
-                console.error('Error fetching attendees:', error)
-            } else {
-                setAttendees((data as Attendee[]) || [])
-            }
-        }
+                if (cancelled) return
+                if (error) {
+                    console.error('Error fetching attendees:', error)
+                } else {
+                    setAttendees((data as Attendee[]) || [])
+                }
+            })()
+        }, 0)
 
-        if (booking) {
-            fetchAttendees()
+        return () => {
+            cancelled = true
+            clearTimeout(timer)
         }
     }, [booking])
 
@@ -62,7 +76,76 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
         }
     }
 
+    async function handleToggleCancelled() {
+        if (!booking) return
+
+        const next = !isCancelled
+        const action = next ? 'cancel' : 'restore'
+        if (
+            !window.confirm(
+                next
+                    ? `Mark order #${booking.woo_id} as cancelled? It will be excluded from dashboard metrics.`
+                    : `Restore order #${booking.woo_id} as active?`
+            )
+        ) {
+            return
+        }
+
+        setIsTogglingCancel(true)
+        setError(null)
+
+        const { error } = await supabase
+            .from('cad_yip_bookings')
+            .update({ is_cancelled: next } as Record<string, unknown>)
+            .eq('id', booking.id)
+
+        setIsTogglingCancel(false)
+
+        if (error) {
+            setError(`Failed to ${action} booking. Please try again.`)
+            console.error('Error toggling cancel:', error)
+            return
+        }
+
+        setIsCancelled(next)
+        onUpdate()
+    }
+
+    function partyTextForBooking() {
+        if (!booking) return ''
+        const withAttendees: BookingWithAttendees = {
+            ...booking,
+            cad_yip_attendees:
+                attendees.length > 0
+                    ? attendees.map((a) => ({
+                          id: a.id,
+                          attendee_firstname: a.attendee_firstname,
+                          attendee_lastname: a.attendee_lastname,
+                      }))
+                    : booking.cad_yip_attendees,
+            seat,
+            pickup_loc: pickupLoc,
+        }
+        return buildGroupedExportText([withAttendees], { seat, pickup: pickupLoc })
+    }
+
+    async function handleCopyParty() {
+        if (!booking) return
+        const text = partyTextForBooking()
+        try {
+            await navigator.clipboard.writeText(text)
+            setCopyFeedback('Copied')
+            setTimeout(() => setCopyFeedback(null), 1500)
+        } catch {
+            setError('Could not copy to clipboard.')
+        }
+    }
+
     if (!booking) return null
+
+    const customerName = formatCustomerName(booking)
+    const partyText = partyTextForBooking()
+    const partyLines = partyText ? partyText.split('\n') : []
 
     return (
         <div className="modal-overlay" onClick={onClose}>
@@ -70,9 +153,14 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
                 {/* Header */}
                 <div className="flex items-center justify-between mb-6">
                     <div>
-                        <h2 className="text-xl font-bold text-[var(--foreground)]">
-                            Order #{booking.woo_id}
-                        </h2>
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <h2 className="text-xl font-bold text-[var(--foreground)]">
+                                Order #{booking.woo_id}
+                            </h2>
+                            {isCancelled && (
+                                <span className="badge badge-error">Cancelled</span>
+                            )}
+                        </div>
                         <p className="text-sm text-[var(--foreground-secondary)]">
                             Created {formatDate(booking.created_at)}
                         </p>
@@ -80,6 +168,7 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
                     <button
                         onClick={onClose}
                         className="p-2 rounded-lg hover:bg-[var(--background-tertiary)] transition-colors"
+                        aria-label="Close"
                     >
                         <svg
                             className="w-5 h-5 text-[var(--foreground-secondary)]"
@@ -103,13 +192,13 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
                         Customer Information
                     </h3>
                     <div className="space-y-2">
-                        <div className="flex justify-between">
+                        <div className="flex justify-between gap-4">
                             <span className="text-[var(--foreground-muted)]">Name</span>
-                            <span className="font-medium">{booking.firstname} {booking.lastname}</span>
+                            <span className="font-medium text-right">{customerName}</span>
                         </div>
-                        <div className="flex justify-between">
+                        <div className="flex justify-between gap-4">
                             <span className="text-[var(--foreground-muted)]">Email</span>
-                            <span className="text-[var(--accent)]">{booking.email}</span>
+                            <span className="text-[var(--accent)] text-right break-all">{booking.email}</span>
                         </div>
                         {booking.phone_e164 && (
                             <div className="flex justify-between">
@@ -161,9 +250,7 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
                             {attendees.map((attendee) => (
                                 <div key={attendee.id} className="flex items-center gap-2">
                                     <div className="w-2 h-2 rounded-full bg-[var(--accent)]" />
-                                    <span>
-                                        {attendee.attendee_firstname} {attendee.attendee_lastname}
-                                    </span>
+                                    <span>{formatAttendeeName(attendee)}</span>
                                 </div>
                             ))}
                         </div>
@@ -227,6 +314,38 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
                             className="input"
                         />
                     </div>
+                    <div className="p-3 rounded-lg bg-[var(--background)] border border-[var(--border)]">
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                            <span className="text-xs font-medium text-[var(--foreground-secondary)]">
+                                Party export (header + attendees)
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => void handleCopyParty()}
+                                className="text-xs font-medium text-[var(--primary)] hover:underline"
+                            >
+                                {copyFeedback || 'Copy'}
+                            </button>
+                        </div>
+                        <div className="space-y-0.5">
+                            {partyLines.length > 0 ? (
+                                partyLines.map((line, idx) => (
+                                    <p
+                                        key={idx}
+                                        className={`text-sm font-mono break-all ${
+                                            idx === 0
+                                                ? 'text-[var(--foreground-secondary)]'
+                                                : 'text-[var(--foreground)]'
+                                        }`}
+                                    >
+                                        {line || '\u00A0'}
+                                    </p>
+                                ))
+                            ) : (
+                                <p className="text-sm text-[var(--foreground-muted)]">No attendees to export</p>
+                            )}
+                        </div>
+                    </div>
                 </div>
 
                 {/* Error Message */}
@@ -237,23 +356,37 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
                 )}
 
                 {/* Actions */}
-                <div className="flex gap-3">
-                    <button onClick={onClose} className="btn btn-secondary flex-1">
-                        Cancel
-                    </button>
+                <div className="flex flex-col gap-3">
+                    <div className="flex gap-3">
+                        <button onClick={onClose} className="btn btn-secondary flex-1">
+                            Close
+                        </button>
+                        <button
+                            onClick={() => void handleSave()}
+                            disabled={isSaving || isTogglingCancel}
+                            className="btn btn-primary flex-1"
+                        >
+                            {isSaving ? (
+                                <>
+                                    <div className="spinner w-4 h-4" />
+                                    Saving...
+                                </>
+                            ) : (
+                                'Save Changes'
+                            )}
+                        </button>
+                    </div>
                     <button
-                        onClick={handleSave}
-                        disabled={isSaving}
-                        className="btn btn-primary flex-1"
+                        type="button"
+                        onClick={() => void handleToggleCancelled()}
+                        disabled={isSaving || isTogglingCancel}
+                        className={`btn flex-1 ${isCancelled ? 'btn-secondary' : 'btn-danger'}`}
                     >
-                        {isSaving ? (
-                            <>
-                                <div className="spinner w-4 h-4" />
-                                Saving...
-                            </>
-                        ) : (
-                            'Save Changes'
-                        )}
+                        {isTogglingCancel
+                            ? 'Updating…'
+                            : isCancelled
+                              ? 'Restore booking'
+                              : 'Mark as cancelled'}
                     </button>
                 </div>
             </div>

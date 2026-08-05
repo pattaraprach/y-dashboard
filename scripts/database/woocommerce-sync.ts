@@ -48,6 +48,11 @@ interface PickupSyncStats {
   errors: string[]
 }
 
+interface WooMeta {
+  key: string
+  value: unknown
+}
+
 interface WooOrder {
   id: number
   date_created: string
@@ -66,17 +71,49 @@ interface WooOrder {
     sku: string
     quantity: number
     total: string
-    meta_data: Array<{
-      key: string
-      value: any
-    }>
+    meta_data: WooMeta[]
   }>
-  meta_data: Array<{
-    key: string
-    value: any
-  }>
+  meta_data: WooMeta[]
   payment_method: string
   payment_method_title: string
+}
+
+interface WooEventTicket {
+  WooCommerceEventsAttendeeName?: string
+  WooCommerceEventsAttendeeLastName?: string
+}
+
+interface SimpleAttendee {
+  first_name?: string
+  firstname?: string
+  last_name?: string
+  lastname?: string
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function metaAsString(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return ''
+}
+
+function hasRoyalSilkTransfer(productExtras: unknown): boolean {
+  if (!isRecord(productExtras) || !isRecord(productExtras.groups)) return false
+
+  for (const group of Object.values(productExtras.groups)) {
+    if (!isRecord(group)) continue
+    for (const field of Object.values(group)) {
+      if (!isRecord(field)) continue
+      const label = typeof field.label === 'string' ? field.label : ''
+      if (label.toLowerCase().includes('royal silk') && field.value === '__checked__') {
+        return true
+      }
+    }
+  }
+  return false
 }
 
 /**
@@ -119,7 +156,7 @@ async function fetchWooCommerceOrders(
 /**
  * Extract metadata value from WooCommerce meta_data array
  */
-function getMetaValue(metaData: Array<{ key: string; value: any }>, key: string): any {
+function getMetaValue(metaData: WooMeta[], key: string): unknown {
   const meta = metaData.find(m => m.key === key)
   return meta ? meta.value : null
 }
@@ -276,26 +313,17 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
       }
 
       // Extract metadata from line item
-      const seat = getMetaValue(lineItem.meta_data, 'seat') || getMetaValue(lineItem.meta_data, 'pa_seat')
+      const seat =
+        metaAsString(getMetaValue(lineItem.meta_data, 'seat')) ||
+        metaAsString(getMetaValue(lineItem.meta_data, 'pa_seat'))
 
       // Check for RSH transfer by looking at product_extras for "Royal Silk" checkbox
-      const productExtras = getMetaValue(lineItem.meta_data, 'product_extras')
-      let isRshTransfer = false
-      if (productExtras && productExtras.groups) {
-        // Check all groups for Royal Silk transfer
-        Object.values(productExtras.groups).forEach((group: any) => {
-          Object.values(group).forEach((field: any) => {
-            if (field.label && field.label.toLowerCase().includes('royal silk') && field.value === '__checked__') {
-              isRshTransfer = true
-            }
-          })
-        })
-      }
+      const isRshTransfer = hasRoyalSilkTransfer(getMetaValue(lineItem.meta_data, 'product_extras'))
 
       // Extract pickup location from order-level metadata
       const rshPickupLater = getMetaValue(order.meta_data, '_rsh_pickup_later') === '1'
-      const rshHotelName = getMetaValue(order.meta_data, '_rsh_hotel_name')
-      const rshPickupType = getMetaValue(order.meta_data, '_rsh_pickup_type')
+      const rshHotelName = metaAsString(getMetaValue(order.meta_data, '_rsh_hotel_name'))
+      const rshPickupType = metaAsString(getMetaValue(order.meta_data, '_rsh_pickup_type'))
 
       let pickupLoc = ''
       if (isRshTransfer) {
@@ -307,25 +335,37 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
       }
       // Fallback to line item metadata if no RSH pickup info
       if (!pickupLoc) {
-        pickupLoc = getMetaValue(lineItem.meta_data, 'pickup_location') || getMetaValue(lineItem.meta_data, 'pa_pickup') || ''
+        pickupLoc =
+          metaAsString(getMetaValue(lineItem.meta_data, 'pickup_location')) ||
+          metaAsString(getMetaValue(lineItem.meta_data, 'pa_pickup'))
       }
 
       // Extract event date from pa_date variation
-      let eventDate = getMetaValue(lineItem.meta_data, 'pa_date')
+      let eventDate: string | null = metaAsString(getMetaValue(lineItem.meta_data, 'pa_date')) || null
       if (eventDate) {
         // Convert from "25-november-2026" format to "2026-11-25" format
         eventDate = convertEventDate(eventDate)
       }
       if (!eventDate) {
-        eventDate = getMetaValue(lineItem.meta_data, 'event_date') || getMetaValue(order.meta_data, 'event_date')
+        eventDate =
+          metaAsString(getMetaValue(lineItem.meta_data, 'event_date')) ||
+          metaAsString(getMetaValue(order.meta_data, 'event_date')) ||
+          null
       }
 
-      const metaZoneCode = getMetaValue(lineItem.meta_data, 'zone_code') || getMetaValue(lineItem.meta_data, 'pa_zone')
-      const metaZone = getMetaValue(lineItem.meta_data, 'zone') || getMetaValue(lineItem.meta_data, 'pa_zone_name')
+      const metaZoneCode =
+        metaAsString(getMetaValue(lineItem.meta_data, 'zone_code')) ||
+        metaAsString(getMetaValue(lineItem.meta_data, 'pa_zone'))
+      const metaZone =
+        metaAsString(getMetaValue(lineItem.meta_data, 'zone')) ||
+        metaAsString(getMetaValue(lineItem.meta_data, 'pa_zone_name'))
       const inferredZone = (!metaZoneCode || !metaZone) ? inferZoneFromSku(lineItem.sku) : null
       const zoneCode = metaZoneCode || inferredZone?.zoneCode || null
       const zone = metaZone || inferredZone?.zone || null
-      const eventType = getMetaValue(lineItem.meta_data, 'event_type') || getMetaValue(order.meta_data, 'event_type')
+      const eventType =
+        metaAsString(getMetaValue(lineItem.meta_data, 'event_type')) ||
+        metaAsString(getMetaValue(order.meta_data, 'event_type')) ||
+        null
 
       // Parse phone number
       const phone = parsePhoneNumber(order.billing.phone, order.billing.country)
@@ -409,12 +449,14 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
       const wooEventsTickets = getMetaValue(order.meta_data, 'WooCommerceEventsOrderTickets')
       const attendees: Array<{ firstname: string; lastname: string }> = []
 
-      if (wooEventsTickets) {
+      if (isRecord(wooEventsTickets)) {
         // Iterate through line items in the events tickets structure
-        Object.values(wooEventsTickets).forEach((lineItemTickets: any) => {
-          if (typeof lineItemTickets === 'object') {
+        Object.values(wooEventsTickets).forEach((lineItemTickets) => {
+          if (isRecord(lineItemTickets)) {
             // Iterate through individual ticket holders
-            Object.values(lineItemTickets).forEach((ticket: any) => {
+            Object.values(lineItemTickets).forEach((ticketValue) => {
+              if (!isRecord(ticketValue)) return
+              const ticket = ticketValue as WooEventTicket
               if (ticket.WooCommerceEventsAttendeeName) {
                 attendees.push({
                   firstname: ticket.WooCommerceEventsAttendeeName || '',
@@ -428,10 +470,14 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
 
       // Fallback to simpler attendee structure if WooCommerceEvents not found
       if (attendees.length === 0) {
-        const simpleAttendees = getMetaValue(lineItem.meta_data, 'attendees') ||
-                               getMetaValue(lineItem.meta_data, '_attendees') || []
+        const simpleAttendees =
+          getMetaValue(lineItem.meta_data, 'attendees') ??
+          getMetaValue(lineItem.meta_data, '_attendees') ??
+          []
         if (Array.isArray(simpleAttendees)) {
-          simpleAttendees.forEach((attendee: any) => {
+          simpleAttendees.forEach((attendeeValue) => {
+            if (!isRecord(attendeeValue)) return
+            const attendee = attendeeValue as SimpleAttendee
             attendees.push({
               firstname: attendee.first_name || attendee.firstname || '',
               lastname: attendee.last_name || attendee.lastname || '',
@@ -479,16 +525,24 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
       let links: string[] = []
 
       if (Array.isArray(eticketUrls) && eticketUrls.length > 0) {
-        links = eticketUrls.filter((url: any) => typeof url === 'string' && url.trim() !== '')
+        links = eticketUrls.filter((url): url is string => typeof url === 'string' && url.trim() !== '')
       }
 
       // Fallback to other link metadata
       if (links.length === 0) {
-        const fallbackLinks = getMetaValue(lineItem.meta_data, 'links') ||
-                             getMetaValue(lineItem.meta_data, '_links') ||
-                             getMetaValue(order.meta_data, 'booking_links') || []
+        const fallbackLinks =
+          getMetaValue(lineItem.meta_data, 'links') ??
+          getMetaValue(lineItem.meta_data, '_links') ??
+          getMetaValue(order.meta_data, 'booking_links') ??
+          []
         if (Array.isArray(fallbackLinks)) {
-          links = fallbackLinks.map((link: any) => typeof link === 'string' ? link : link.url).filter(Boolean)
+          links = fallbackLinks
+            .map((link): string | null => {
+              if (typeof link === 'string') return link
+              if (isRecord(link) && typeof link.url === 'string') return link.url
+              return null
+            })
+            .filter((url): url is string => Boolean(url))
         }
       }
 
@@ -657,8 +711,8 @@ async function syncOrderPickupOnly(order: WooOrder, stats: PickupSyncStats, dryR
 
     // Extract pickup info from order-level metadata (same logic as full sync)
     const rshPickupLater = getMetaValue(order.meta_data, '_rsh_pickup_later') === '1'
-    const rshHotelName = getMetaValue(order.meta_data, '_rsh_hotel_name')
-    const rshPickupType = getMetaValue(order.meta_data, '_rsh_pickup_type')
+    const rshHotelName = metaAsString(getMetaValue(order.meta_data, '_rsh_hotel_name'))
+    const rshPickupType = metaAsString(getMetaValue(order.meta_data, '_rsh_pickup_type'))
 
     let hasRshLineItem = false
 
@@ -666,17 +720,7 @@ async function syncOrderPickupOnly(order: WooOrder, stats: PickupSyncStats, dryR
       if (!lineItem.sku) continue
 
       // Check if this line item is an RSH transfer
-      const productExtras = getMetaValue(lineItem.meta_data, 'product_extras')
-      let isRshTransfer = false
-      if (productExtras && productExtras.groups) {
-        Object.values(productExtras.groups).forEach((group: any) => {
-          Object.values(group).forEach((field: any) => {
-            if (field.label && field.label.toLowerCase().includes('royal silk') && field.value === '__checked__') {
-              isRshTransfer = true
-            }
-          })
-        })
-      }
+      const isRshTransfer = hasRoyalSilkTransfer(getMetaValue(lineItem.meta_data, 'product_extras'))
 
       if (!isRshTransfer) {
         console.log(`  Skipping line item ${lineItem.sku} (not RSH transfer)`)
@@ -695,7 +739,9 @@ async function syncOrderPickupOnly(order: WooOrder, stats: PickupSyncStats, dryR
 
       // Fallback to line item metadata if no RSH pickup info
       if (!pickupLoc) {
-        pickupLoc = getMetaValue(lineItem.meta_data, 'pickup_location') || getMetaValue(lineItem.meta_data, 'pa_pickup') || ''
+        pickupLoc =
+          metaAsString(getMetaValue(lineItem.meta_data, 'pickup_location')) ||
+          metaAsString(getMetaValue(lineItem.meta_data, 'pa_pickup'))
       }
 
       // Find the existing booking
