@@ -1,0 +1,14 @@
+scripts/database/add-refunds.sql
+  h_ec7c44b8f8b0cd 1-123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.20",
+  "base_commit_sha": "cd8b763631f9b3accdb1caea5c91ed2a2fa744ce",
+  "prompts": {},
+  "humans": {
+    "h_ec7c44b8f8b0cd": {
+      "author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
