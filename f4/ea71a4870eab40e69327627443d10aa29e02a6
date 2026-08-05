@@ -1,0 +1,14 @@
+scripts/database/woocommerce-sync.ts
+  h_ec7c44b8f8b0cd 167-168,172-175,181-182,191-203,698-703,711,924-930,944-945,950,991,1195,1268-1269,1277,1286,1294
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.20",
+  "base_commit_sha": "f4ea71a4870eab40e69327627443d10aa29e02a6",
+  "prompts": {},
+  "humans": {
+    "h_ec7c44b8f8b0cd": {
+      "author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
