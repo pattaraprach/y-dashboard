@@ -68,15 +68,33 @@ npm run sync:woo -- --from=2025-12-01 --to=2025-12-31 --event=CADCNX --dry-run
 - Perfect for testing before running the actual sync
 - Use this first to verify the sync will work correctly
 
+### Refunds (completed + refunded + cancelled)
+
+Apply schema first (Supabase SQL editor or `psql`):
+
+```bash
+# scripts/database/add-refunds.sql
+```
+
+Then sync as usual. The script:
+
+- Fetches `status=completed,refunded,cancelled`
+- Loads `/orders/{id}/refunds` when status is refunded/cancelled **or** `order.refunds[]` is non-empty
+- Upserts `cad_yip_refunds` + `cad_yip_refund_items`
+- Sets booking `is_cancelled=true` for **any** refund (partial or full), including `completed` + refund evidence
+- Keeps dashboard cancel via `cancel_source=dashboard` sticky
+
 ### What Gets Synced
 
-The script syncs data to three tables:
+The script syncs data to:
 
 1. **cad_yip_bookings**
    - Order and customer information
    - Pricing, commission, and fees
    - Event details (date, type, zone)
    - Seat and pickup information
+   - Refund flags: `woo_status`, `refund_status`, `amount_refunded`, `amount_net`, `is_cancelled`
+2. **cad_yip_refunds** / **cad_yip_refund_items** — Woo refund ledger
 
 2. **cad_yip_attendees**
    - Attendee names for each booking
