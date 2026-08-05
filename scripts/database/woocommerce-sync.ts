@@ -164,25 +164,42 @@ function absMoney(value: string | number | undefined | null): number {
   return Number.isFinite(n) ? Math.abs(n) : 0
 }
 
+type WooDateField = 'created' | 'modified'
+
 /**
  * Fetch orders from WooCommerce REST API.
  * Includes completed + refunded + cancelled so we can detect refund evidence.
+ *
+ * dateField:
+ *   - created  → order placed in range (default)
+ *   - modified → order updated in range (catches older orders refunded later)
  */
 async function fetchWooCommerceOrders(
   dateFrom: string,
   dateTo: string,
   page: number = 1,
-  perPage: number = 100
+  perPage: number = 100,
+  dateField: WooDateField = 'created'
 ): Promise<WooOrder[]> {
   const params = new URLSearchParams({
     per_page: perPage.toString(),
     page: page.toString(),
-    after: new Date(dateFrom).toISOString(),
-    before: new Date(dateTo + 'T23:59:59').toISOString(),
-    orderby: 'date',
     order: 'asc',
     status: WOO_ORDER_STATUSES,
   })
+
+  const fromIso = new Date(dateFrom).toISOString()
+  const toIso = new Date(dateTo + 'T23:59:59').toISOString()
+
+  if (dateField === 'modified') {
+    params.set('modified_after', fromIso)
+    params.set('modified_before', toIso)
+    params.set('orderby', 'modified')
+  } else {
+    params.set('after', fromIso)
+    params.set('before', toIso)
+    params.set('orderby', 'date')
+  }
 
   const url = `${WOOCOMMERCE_URL}/wp-json/wc/v3/orders?${params}`
 
@@ -678,6 +695,12 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
         )
       }
 
+      // DB has country check (ISO codes); empty string fails constraint
+      const countryCode =
+        order.billing.country && /^[A-Z]{2}$/i.test(order.billing.country.trim())
+          ? order.billing.country.trim().toUpperCase()
+          : null
+
       const bookingData = {
         woo_id: order.id,
         firstname: order.billing.first_name,
@@ -685,7 +708,7 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
         email: order.billing.email,
         phone_raw: phone.raw,
         phone_e164: phone.e164,
-        country: order.billing.country,
+        country: countryCode,
         sku: lineItem.sku,
         seat,
         is_rsh_transfer: isRshTransfer,
@@ -898,7 +921,13 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
 
     stats.ordersProcessed++
   } catch (error) {
-    const errorMsg = `Error processing order #${order.id}: ${error}`
+    const detail =
+      error instanceof Error
+        ? error.message
+        : typeof error === 'object' && error && 'message' in error
+          ? String((error as { message: unknown }).message)
+          : JSON.stringify(error)
+    const errorMsg = `Error processing order #${order.id}: ${detail}`
     console.error(errorMsg)
     stats.errors.push(errorMsg)
   }
@@ -912,12 +941,13 @@ async function syncWooCommerce(
   dateTo: string,
   eventFilter?: string,
   dryRun: boolean = false,
-  limit?: number
+  limit?: number,
+  dateField: WooDateField = 'created'
 ): Promise<void> {
   console.log('='.repeat(60))
   console.log(`WooCommerce to Supabase Sync${dryRun ? ' [DRY RUN MODE]' : ''}`)
   console.log('='.repeat(60))
-  console.log(`Date Range: ${dateFrom} to ${dateTo}`)
+  console.log(`Date Range: ${dateFrom} to ${dateTo} (by order ${dateField})`)
   if (eventFilter) {
     console.log(`Event Filter: ${eventFilter}`)
   }
@@ -958,7 +988,7 @@ async function syncWooCommerce(
 
     while (hasMore) {
       console.log(`Fetching page ${page}...`)
-      const orders = await fetchWooCommerceOrders(dateFrom, dateTo, page)
+      const orders = await fetchWooCommerceOrders(dateFrom, dateTo, page, 100, dateField)
 
       if (orders.length === 0) {
         hasMore = false
@@ -1162,7 +1192,7 @@ async function syncPickupOnly(
 
   while (hasMore) {
     console.log(`Fetching page ${page}...`)
-    const orders = await fetchWooCommerceOrders(dateFrom, dateTo, page)
+    const orders = await fetchWooCommerceOrders(dateFrom, dateTo, page, 100, 'created')
 
     if (orders.length === 0) {
       hasMore = false
@@ -1235,6 +1265,8 @@ const limitStr = getArg('limit')
 const limit = limitStr ? parseInt(limitStr, 10) : undefined
 const dryRun = hasFlag('dry-run')
 const pickupOnly = hasFlag('pickup-only')
+const dateFieldArg = (getArg('date-field') || 'created').toLowerCase()
+const dateField: WooDateField = dateFieldArg === 'modified' ? 'modified' : 'created'
 
 if (!dateFrom || !dateTo) {
   console.error('Usage: npm run sync:woo -- --from=YYYY-MM-DD --to=YYYY-MM-DD [OPTIONS]')
@@ -1242,6 +1274,7 @@ if (!dateFrom || !dateTo) {
   console.error('Options:')
   console.error('  --from=DATE        Start date (YYYY-MM-DD)')
   console.error('  --to=DATE          End date (YYYY-MM-DD)')
+  console.error('  --date-field=MODE  created (default) | modified — use modified for refund catch-up')
   console.error('  --event=CODE       Filter by event code (CADCNX or CADNYE)')
   console.error('  --limit=N          Process maximum N orders (useful for testing)')
   console.error('  --dry-run          Preview changes without writing to database')
@@ -1250,6 +1283,7 @@ if (!dateFrom || !dateTo) {
   console.error('Examples:')
   console.error('  npm run sync:woo -- --from=2024-01-01 --to=2024-12-31 --dry-run')
   console.error('  npm run sync:woo -- --from=2024-01-01 --to=2024-12-31 --event=CADCNX --limit=5')
+  console.error('  npm run sync:woo -- --from=2026-06-01 --to=2026-08-05 --date-field=modified')
   console.error('  npm run sync:woo -- --from=2024-01-01 --to=2024-12-31 --pickup-only --dry-run')
   process.exit(1)
 }
@@ -1257,7 +1291,7 @@ if (!dateFrom || !dateTo) {
 // Run sync
 const runner = pickupOnly
   ? syncPickupOnly(dateFrom, dateTo, eventFilter, dryRun, limit)
-  : syncWooCommerce(dateFrom, dateTo, eventFilter, dryRun, limit)
+  : syncWooCommerce(dateFrom, dateTo, eventFilter, dryRun, limit, dateField)
 
 runner
   .then(() => {
