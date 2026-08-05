@@ -1,0 +1,16 @@
+scripts/database/woocommerce-sync.ts
+  h_ec7c44b8f8b0cd 29-33,38-40,47-49,89-115,156-166,168-169,184,191,203-294,440-544,550-575,651,654-679,701-711,753-756,894-898,949-951,1006-1008
+src/lib/bookings-query.ts
+  h_ec7c44b8f8b0cd 1-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.20",
+  "base_commit_sha": "1c607dcb6f8cdbd8ffb61ccb32fe74bba3e5fafa",
+  "prompts": {},
+  "humans": {
+    "h_ec7c44b8f8b0cd": {
+      "author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
