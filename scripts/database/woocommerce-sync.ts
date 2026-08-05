@@ -26,10 +26,17 @@ const WOOCOMMERCE_URL = process.env.WOOCOMMERCE_URL || ''
 const WOOCOMMERCE_CONSUMER_KEY = process.env.WOOCOMMERCE_CONSUMER_KEY || ''
 const WOOCOMMERCE_CONSUMER_SECRET = process.env.WOOCOMMERCE_CONSUMER_SECRET || ''
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-const SUPABASE_SERVICE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '' // Use service key for admin operations
+const SUPABASE_SERVICE_KEY =
+  process.env.SUPABASE_SERVICE_KEY ||
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  ''
 
 // Initialize Supabase client
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+/** Woo order statuses we pull (completed may still carry refund evidence). */
+const WOO_ORDER_STATUSES = 'completed,refunded,cancelled'
 
 interface SyncStats {
   ordersProcessed: number
@@ -37,6 +44,9 @@ interface SyncStats {
   bookingsUpdated: number
   attendeesCreated: number
   linksCreated: number
+  refundsUpserted: number
+  refundItemsUpserted: number
+  bookingsCancelledByRefund: number
   errors: string[]
 }
 
@@ -76,6 +86,33 @@ interface WooOrder {
   meta_data: WooMeta[]
   payment_method: string
   payment_method_title: string
+  /** Embedded summary on order payload (may be empty even when refunds exist). */
+  refunds?: Array<{ id: number; total?: string; reason?: string }>
+}
+
+interface WooRefundLineItem {
+  id: number
+  name?: string
+  sku?: string
+  quantity?: number
+  total?: string
+}
+
+interface WooRefundDetail {
+  id: number
+  date_created?: string
+  amount?: string
+  reason?: string
+  refunded_by?: number
+  refunded_payment?: boolean
+  line_items?: WooRefundLineItem[]
+}
+
+type RefundStatus = 'none' | 'partial' | 'full'
+
+interface SkuRefundAlloc {
+  refunded: number
+  latestAt: string | null
 }
 
 interface WooEventTicket {
@@ -116,8 +153,20 @@ function hasRoyalSilkTransfer(productExtras: unknown): boolean {
   return false
 }
 
+function wooAuthHeader(): string {
+  return Buffer.from(`${WOOCOMMERCE_CONSUMER_KEY}:${WOOCOMMERCE_CONSUMER_SECRET}`).toString(
+    'base64'
+  )
+}
+
+function absMoney(value: string | number | undefined | null): number {
+  const n = typeof value === 'number' ? value : parseFloat(String(value ?? '0'))
+  return Number.isFinite(n) ? Math.abs(n) : 0
+}
+
 /**
- * Fetch orders from WooCommerce REST API
+ * Fetch orders from WooCommerce REST API.
+ * Includes completed + refunded + cancelled so we can detect refund evidence.
  */
 async function fetchWooCommerceOrders(
   dateFrom: string,
@@ -125,8 +174,6 @@ async function fetchWooCommerceOrders(
   page: number = 1,
   perPage: number = 100
 ): Promise<WooOrder[]> {
-  const auth = Buffer.from(`${WOOCOMMERCE_CONSUMER_KEY}:${WOOCOMMERCE_CONSUMER_SECRET}`).toString('base64')
-
   const params = new URLSearchParams({
     per_page: perPage.toString(),
     page: page.toString(),
@@ -134,14 +181,14 @@ async function fetchWooCommerceOrders(
     before: new Date(dateTo + 'T23:59:59').toISOString(),
     orderby: 'date',
     order: 'asc',
-    status: 'completed',
+    status: WOO_ORDER_STATUSES,
   })
 
   const url = `${WOOCOMMERCE_URL}/wp-json/wc/v3/orders?${params}`
 
   const response = await fetch(url, {
     headers: {
-      'Authorization': `Basic ${auth}`,
+      Authorization: `Basic ${wooAuthHeader()}`,
       'Content-Type': 'application/json',
     },
   })
@@ -151,6 +198,98 @@ async function fetchWooCommerceOrders(
   }
 
   return response.json()
+}
+
+function shouldLoadRefundDetails(order: WooOrder): boolean {
+  if (order.status === 'refunded' || order.status === 'cancelled') return true
+  if (Array.isArray(order.refunds) && order.refunds.length > 0) return true
+  return false
+}
+
+/** Full refund list + line items for an order. */
+async function fetchOrderRefunds(orderId: number): Promise<WooRefundDetail[]> {
+  const url = `${WOOCOMMERCE_URL}/wp-json/wc/v3/orders/${orderId}/refunds?per_page=100`
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Basic ${wooAuthHeader()}`,
+      'Content-Type': 'application/json',
+    },
+  })
+  if (!response.ok) {
+    throw new Error(
+      `WooCommerce refunds API error for order #${orderId}: ${response.status} ${response.statusText}`
+    )
+  }
+  const data = await response.json()
+  return Array.isArray(data) ? (data as WooRefundDetail[]) : []
+}
+
+/** Sum refund line totals by SKU (absolute currency units). */
+function allocateRefundsBySku(refunds: WooRefundDetail[]): Map<string, SkuRefundAlloc> {
+  const map = new Map<string, SkuRefundAlloc>()
+  for (const refund of refunds) {
+    for (const line of refund.line_items ?? []) {
+      const sku = (line.sku || '').trim()
+      if (!sku) continue
+      const cur = map.get(sku) || { refunded: 0, latestAt: null }
+      cur.refunded += absMoney(line.total)
+      const at = refund.date_created || null
+      if (at && (!cur.latestAt || at > cur.latestAt)) cur.latestAt = at
+      map.set(sku, cur)
+    }
+  }
+  return map
+}
+
+/**
+ * Any refund ⇒ cancelled. Partial and full both set is_cancelled.
+ * Order status refunded/cancelled without line allocation also cancels.
+ */
+function computeBookingRefundFields(
+  lineTotal: number,
+  alloc: SkuRefundAlloc | undefined,
+  order: WooOrder,
+  hasAnyOrderRefund: boolean
+): {
+  amount_refunded: number
+  amount_net: number
+  refund_status: RefundStatus
+  is_cancelled: boolean
+  cancel_source: 'woo' | null
+  cancelled_at: string | null
+  refunded_at: string | null
+  woo_status: string
+} {
+  const amount_refunded = alloc?.refunded ?? 0
+  const amount_net = Math.max(0, lineTotal - amount_refunded)
+  let refund_status: RefundStatus = 'none'
+
+  if (amount_refunded > 0) {
+    // Float-safe: treat as full when refund covers (almost) the whole line
+    refund_status = amount_refunded + 0.009 >= lineTotal ? 'full' : 'partial'
+  } else if (
+    hasAnyOrderRefund ||
+    order.status === 'refunded' ||
+    order.status === 'cancelled'
+  ) {
+    // Order-level refund/cancel without SKU match — still cancel the booking
+    refund_status = 'full'
+  }
+
+  const is_cancelled = refund_status !== 'none'
+  const refunded_at = alloc?.latestAt ?? null
+  const cancelled_at = is_cancelled ? refunded_at || new Date().toISOString() : null
+
+  return {
+    amount_refunded: refund_status === 'full' && amount_refunded === 0 ? lineTotal : amount_refunded,
+    amount_net: is_cancelled && amount_refunded === 0 ? 0 : amount_net,
+    refund_status,
+    is_cancelled,
+    cancel_source: is_cancelled ? 'woo' : null,
+    cancelled_at,
+    refunded_at,
+    woo_status: order.status,
+  }
 }
 
 /**
@@ -301,9 +440,139 @@ function calculateFees(total: number, paymentMethod: string): number {
 /**
  * Sync a single order to Supabase
  */
+async function upsertOrderRefunds(
+  order: WooOrder,
+  refunds: WooRefundDetail[],
+  bookingIdBySku: Map<string, number>,
+  stats: SyncStats,
+  dryRun: boolean
+): Promise<void> {
+  for (const refund of refunds) {
+    const amount = absMoney(refund.amount)
+    const refundRow = {
+      woo_order_id: order.id,
+      woo_refund_id: refund.id,
+      woo_status: order.status,
+      amount,
+      reason: refund.reason || null,
+      refunded_at: refund.date_created || null,
+      refunded_by: refund.refunded_by ?? null,
+      refunded_payment: refund.refunded_payment ?? null,
+      raw: refund as unknown as Record<string, unknown>,
+    }
+
+    if (dryRun) {
+      console.log(`  [DRY RUN] Would upsert refund #${refund.id} amount=${amount}`)
+      stats.refundsUpserted++
+      for (const line of refund.line_items ?? []) {
+        if (!line.sku) continue
+        console.log(
+          `  [DRY RUN] Would upsert refund item sku=${line.sku} total=${absMoney(line.total)} → booking ${bookingIdBySku.get(line.sku) ?? 'unmatched'}`
+        )
+        stats.refundItemsUpserted++
+      }
+      continue
+    }
+
+    const { data: existing } = await supabase
+      .from('cad_yip_refunds')
+      .select('id')
+      .eq('woo_refund_id', refund.id)
+      .maybeSingle()
+
+    let refundId: number
+    if (existing?.id) {
+      const { error } = await supabase
+        .from('cad_yip_refunds')
+        .update(refundRow)
+        .eq('id', existing.id)
+      if (error) throw error
+      refundId = existing.id
+    } else {
+      const { data, error } = await supabase
+        .from('cad_yip_refunds')
+        .insert(refundRow)
+        .select('id')
+        .single()
+      if (error) throw error
+      refundId = data.id
+    }
+    stats.refundsUpserted++
+
+    for (const line of refund.line_items ?? []) {
+      const sku = (line.sku || '').trim()
+      const line_total = absMoney(line.total)
+      const booking_id = sku ? bookingIdBySku.get(sku) ?? null : null
+      const itemRow = {
+        refund_id: refundId,
+        woo_refund_id: refund.id,
+        woo_order_id: order.id,
+        woo_line_item_id: line.id ?? null,
+        sku: sku || null,
+        product_name: line.name || null,
+        quantity: line.quantity ?? null,
+        line_total,
+        booking_id,
+      }
+
+      if (line.id != null) {
+        const { data: existingItem } = await supabase
+          .from('cad_yip_refund_items')
+          .select('id')
+          .eq('woo_refund_id', refund.id)
+          .eq('woo_line_item_id', line.id)
+          .maybeSingle()
+
+        if (existingItem?.id) {
+          const { error } = await supabase
+            .from('cad_yip_refund_items')
+            .update(itemRow)
+            .eq('id', existingItem.id)
+          if (error) throw error
+        } else {
+          const { error } = await supabase.from('cad_yip_refund_items').insert(itemRow)
+          if (error) throw error
+        }
+      } else {
+        const { error } = await supabase.from('cad_yip_refund_items').insert(itemRow)
+        if (error) throw error
+      }
+      stats.refundItemsUpserted++
+    }
+  }
+}
+
+/**
+ * Sync a single order to Supabase
+ */
 async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = false): Promise<void> {
   try {
-    console.log(`Processing order #${order.id}${dryRun ? ' [DRY RUN]' : ''}...`)
+    console.log(
+      `Processing order #${order.id} [${order.status}]${dryRun ? ' [DRY RUN]' : ''}...`
+    )
+
+    // Refund evidence: status or embedded refunds[]
+    let refunds: WooRefundDetail[] = []
+    if (shouldLoadRefundDetails(order)) {
+      try {
+        refunds = await fetchOrderRefunds(order.id)
+        console.log(`  Refunds loaded: ${refunds.length}`)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`  Warning: could not load refunds for #${order.id}: ${msg}`)
+        stats.errors.push(`Order #${order.id} refunds: ${msg}`)
+      }
+    }
+
+    const refundBySku = allocateRefundsBySku(refunds)
+    const hasAnyOrderRefund =
+      refunds.length > 0 ||
+      (Array.isArray(order.refunds) && order.refunds.length > 0) ||
+      order.status === 'refunded' ||
+      order.status === 'cancelled'
+
+    const bookingIdBySku = new Map<string, number>()
+    const nowIso = new Date().toISOString()
 
     // Process each line item as a separate booking
     for (const lineItem of order.line_items) {
@@ -379,10 +648,35 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
       // Check if booking already exists
       const { data: existingBooking } = await supabase
         .from('cad_yip_bookings')
-        .select('id')
+        .select('id, cancel_source, is_cancelled')
         .eq('woo_id', order.id)
         .eq('sku', lineItem.sku)
-        .single()
+        .maybeSingle()
+
+      const skuAlloc = refundBySku.get(lineItem.sku)
+      const refundFields = computeBookingRefundFields(
+        itemTotal,
+        skuAlloc,
+        order,
+        hasAnyOrderRefund
+      )
+
+      // Dashboard cancel is sticky: Woo cannot un-cancel unless it also has refund evidence
+      const dashboardSticky =
+        existingBooking?.cancel_source === 'dashboard' && existingBooking?.is_cancelled === true
+      const is_cancelled = refundFields.is_cancelled || dashboardSticky
+      const cancel_source = refundFields.is_cancelled
+        ? 'woo'
+        : dashboardSticky
+          ? 'dashboard'
+          : null
+
+      if (refundFields.is_cancelled) {
+        stats.bookingsCancelledByRefund++
+        console.log(
+          `  Refund → cancel sku=${lineItem.sku} status=${refundFields.refund_status} refunded=${refundFields.amount_refunded}`
+        )
+      }
 
       const bookingData = {
         woo_id: order.id,
@@ -404,6 +698,17 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
         zone_code: zoneCode,
         zone,
         event_type: eventType,
+        is_cancelled,
+        amount_refunded: refundFields.amount_refunded,
+        amount_net: refundFields.amount_net,
+        woo_status: refundFields.woo_status,
+        refund_status: refundFields.refund_status,
+        cancel_source,
+        cancelled_at: is_cancelled
+          ? refundFields.cancelled_at || nowIso
+          : null,
+        refunded_at: refundFields.refunded_at,
+        last_synced_at: nowIso,
       }
 
       let bookingId: number
@@ -443,6 +748,10 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
           console.log(`  Created booking ID: ${bookingId}`)
         }
         stats.bookingsCreated++
+      }
+
+      if (bookingId && lineItem.sku) {
+        bookingIdBySku.set(lineItem.sku, bookingId)
       }
 
       // Sync attendees from WooCommerceEventsOrderTickets
@@ -582,6 +891,11 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
       }
     }
 
+    // Persist refund ledger after bookings exist (for booking_id links)
+    if (refunds.length > 0) {
+      await upsertOrderRefunds(order, refunds, bookingIdBySku, stats, dryRun)
+    }
+
     stats.ordersProcessed++
   } catch (error) {
     const errorMsg = `Error processing order #${order.id}: ${error}`
@@ -632,6 +946,9 @@ async function syncWooCommerce(
     bookingsUpdated: 0,
     attendeesCreated: 0,
     linksCreated: 0,
+    refundsUpserted: 0,
+    refundItemsUpserted: 0,
+    bookingsCancelledByRefund: 0,
     errors: [],
   }
 
@@ -686,6 +1003,9 @@ async function syncWooCommerce(
     console.log(`Orders Processed: ${stats.ordersProcessed}`)
     console.log(`Bookings Created: ${stats.bookingsCreated}`)
     console.log(`Bookings Updated: ${stats.bookingsUpdated}`)
+    console.log(`Bookings cancelled by refund: ${stats.bookingsCancelledByRefund}`)
+    console.log(`Refunds upserted: ${stats.refundsUpserted}`)
+    console.log(`Refund items upserted: ${stats.refundItemsUpserted}`)
     console.log(`Attendees Created: ${stats.attendeesCreated}`)
     console.log(`Links Created: ${stats.linksCreated}`)
 
