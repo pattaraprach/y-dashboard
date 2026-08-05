@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // CommonJS install helpers (Node require API)
+    "scripts/**/*.cjs",
   ]),
 ]);
 

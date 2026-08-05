@@ -3,10 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "postinstall": "node scripts/link-typescript-dual.cjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "sync:woo": "ts-node scripts/database/woocommerce-sync.ts",
     "sync:woo:pickup": "ts-node scripts/database/woocommerce-sync.ts --pickup-only",
     "delete:cadnye2631": "ts-node scripts/database/delete-cadnye2631.ts"
@@ -16,7 +18,7 @@
     "@supabase/supabase-js": "^2.111.0",
     "clsx": "^2.1.1",
     "dotenv": "^17.4.2",
-    "next": "16.2.12",
+    "next": "16.3.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "tailwind-merge": "^3.6.0"
@@ -26,11 +28,12 @@
     "@types/node": "^22.19.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9.39.5",
-    "eslint-config-next": "16.2.12",
+    "eslint-config-next": "16.3.0",
     "tailwindcss": "^4.3.3",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
   }
 }
