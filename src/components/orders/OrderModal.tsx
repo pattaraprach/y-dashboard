@@ -110,7 +110,25 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
 
     const { error: toggleError } = await supabase
       .from('cad_yip_bookings')
-      .update({ is_cancelled: next } as Record<string, unknown>)
+      .update(
+        (next
+          ? {
+              is_cancelled: true,
+              cancel_source: 'dashboard',
+              cancelled_at: new Date().toISOString(),
+            }
+          : booking.refund_status && booking.refund_status !== 'none'
+            ? {
+                // Cannot restore while Woo refund evidence remains
+                is_cancelled: true,
+                cancel_source: 'woo',
+              }
+            : {
+                is_cancelled: false,
+                cancel_source: null,
+                cancelled_at: null,
+              }) as Record<string, unknown>
+      )
       .eq('id', booking.id)
 
     setIsTogglingCancel(false)
