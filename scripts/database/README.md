@@ -68,12 +68,29 @@ npm run sync:woo -- --from=2025-12-01 --to=2025-12-31 --event=CADCNX --dry-run
 - Perfect for testing before running the actual sync
 - Use this first to verify the sync will work correctly
 
+### Row Level Security (RLS)
+
+Supabase warns when tables are unrestricted. Enable RLS for all `cad_yip_*` tables:
+
+```bash
+# scripts/database/enable-rls.sql
+```
+
+| Role | Access |
+|------|--------|
+| `anon` (publishable key, not logged in) | **Denied** |
+| `authenticated` (dashboard login) | Full CRUD |
+| `service_role` (`SUPABASE_SERVICE_KEY`) | Bypasses RLS (Woo sync) |
+
+After RLS: **stay logged in** for the app. For `npm run sync:woo`, set **`SUPABASE_SERVICE_KEY`** (service role) in `.env.local` so the script is not blocked.
+
 ### Refunds (completed + refunded + cancelled)
 
 Apply schema first (Supabase SQL editor or `psql`):
 
 ```bash
-# scripts/database/add-refunds.sql
+# 1) scripts/database/add-refunds.sql
+# 2) scripts/database/enable-rls.sql
 ```
 
 Then sync as usual. The script:
