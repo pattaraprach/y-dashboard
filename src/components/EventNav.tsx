@@ -2,6 +2,8 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
 export function EventNav() {
   const pathname = usePathname()
@@ -12,35 +14,33 @@ export function EventNav() {
   ]
 
   return (
-    <nav className="mb-6 border-b border-[var(--border)]">
-      <div className="flex items-center justify-between">
-        <div className="flex gap-1">
-          {navItems.map((item) => {
-            const isActive = pathname === item.href
-            return (
-              <Link
-                key={item.code}
-                href={item.href}
-                className={`px-6 py-3 font-medium transition-colors border-b-2 ${
-                  isActive
-                    ? 'border-[var(--primary)] text-[var(--primary)]'
-                    : 'border-transparent text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:border-[var(--border)]'
-                }`}
-              >
-                {item.label}
-              </Link>
-            )
-          })}
-        </div>
-        <form action="/auth/logout" method="POST">
-          <button
-            type="submit"
-            className="px-4 py-2 text-sm font-medium text-[var(--foreground-secondary)] hover:text-[var(--foreground)] transition-colors"
-          >
-            Sign out
-          </button>
-        </form>
+    <nav className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b pb-0">
+      <div className="flex gap-1">
+        {navItems.map((item) => {
+          const isActive = pathname === item.href
+          return (
+            <Link
+              key={item.code}
+              href={item.href}
+              // Partial Prefetching (Next 16.3) reuses App Shells for these routes
+              prefetch
+              className={cn(
+                'border-b-2 px-4 py-2.5 text-sm font-medium transition-colors',
+                isActive
+                  ? 'border-primary text-foreground'
+                  : 'border-transparent text-muted-foreground hover:border-border hover:text-foreground'
+              )}
+            >
+              {item.label}
+            </Link>
+          )
+        })}
       </div>
+      <form action="/auth/logout" method="POST">
+        <Button type="submit" variant="ghost" size="sm">
+          Sign out
+        </Button>
+      </form>
     </nav>
   )
 }

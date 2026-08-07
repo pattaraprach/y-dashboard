@@ -1,69 +1,77 @@
 'use client'
 
+import type { ReactNode } from 'react'
+import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 
 interface MetricCardProps {
-    title: string
-    value: string
-    subtitle?: string
-    icon: React.ReactNode
-    variant?: 'default' | 'accent' | 'success' | 'warning'
-    trend?: {
-        value: number
-        isPositive: boolean
-    }
-    breakdown?: { label: string; value: string }[]
+  title: string
+  value: string
+  subtitle?: string
+  icon?: ReactNode
+  variant?: 'default' | 'accent' | 'success' | 'warning'
+  /** Day / segment chips shown inline so card height matches siblings */
+  breakdown?: { label: string; value: string }[]
+}
+
+const variantAccent: Record<NonNullable<MetricCardProps['variant']>, string> = {
+  default: 'text-foreground',
+  accent: 'text-foreground',
+  success: 'text-success',
+  warning: 'text-warning-foreground',
 }
 
 export function MetricCard({
-    title,
-    value,
-    subtitle,
-    icon,
-    variant = 'default',
-    trend,
-    breakdown,
+  title,
+  value,
+  subtitle,
+  icon,
+  variant = 'default',
+  breakdown,
 }: MetricCardProps) {
-    return (
-        <div className={cn('metric-card', variant)}>
-            <div className="flex items-start justify-between mb-4">
-                <div className="p-3 rounded-xl bg-[var(--background-tertiary)]">
-                    {icon}
-                </div>
-                {trend && (
-                    <span
-                        className={cn(
-                            'text-sm font-medium px-2 py-1 rounded-md',
-                            trend.isPositive
-                                ? 'text-[var(--success)] bg-[var(--success-bg)]'
-                                : 'text-[var(--error)] bg-[var(--error-bg)]'
-                        )}
-                    >
-                        {trend.isPositive ? '+' : ''}{trend.value}%
-                    </span>
-                )}
-            </div>
-            <h3 className="text-sm font-medium text-[var(--foreground-secondary)] mb-1">
-                {title}
-            </h3>
-            <p className="text-2xl font-bold text-[var(--foreground)] tracking-tight">
-                {value}
-            </p>
-            {subtitle && (
-                <p className="text-xs text-[var(--foreground-muted)] mt-2">
-                    {subtitle}
-                </p>
+  const hasBreakdown = Boolean(breakdown && breakdown.length > 0)
+
+  return (
+    <Card size="sm" className="h-full">
+      <CardHeader className="flex flex-row items-start gap-3">
+        <div className="min-w-0 flex-1 space-y-1">
+          <CardDescription className="leading-snug">{title}</CardDescription>
+          <CardTitle
+            className={cn(
+              // CardTitle defaults to text-sm; force metric hierarchy.
+              '!text-2xl font-semibold tracking-tight',
+              variantAccent[variant]
             )}
-            {breakdown && breakdown.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-[var(--border)] space-y-1">
-                    {breakdown.map((item) => (
-                        <div key={item.label} className="flex items-center justify-between">
-                            <span className="text-xs text-[var(--foreground-secondary)]">{item.label}</span>
-                            <span className="text-xs font-semibold text-[var(--foreground)]">{item.value}</span>
-                        </div>
-                    ))}
-                </div>
-            )}
+          >
+            {value}
+          </CardTitle>
+          {subtitle ? (
+            <p className="text-xs text-muted-foreground">{subtitle}</p>
+          ) : null}
         </div>
-    )
+
+        {hasBreakdown ? (
+          <div className="flex max-w-[55%] shrink-0 items-stretch gap-2 self-center overflow-x-auto">
+            {breakdown!.map((item) => (
+              <div
+                key={item.label}
+                className="flex min-w-[4.5rem] shrink-0 flex-col items-center justify-center rounded-lg border bg-muted/40 px-2.5 py-2 text-center"
+              >
+                <span className="text-base font-semibold tabular-nums leading-none">
+                  {item.value}
+                </span>
+                <span className="mt-1.5 text-[0.65rem] font-medium tracking-wide text-muted-foreground uppercase">
+                  {item.label}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : icon ? (
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+            {icon}
+          </div>
+        ) : null}
+      </CardHeader>
+    </Card>
+  )
 }

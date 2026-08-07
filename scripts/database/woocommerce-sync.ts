@@ -20,16 +20,64 @@ import path from 'path'
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local') })
 
 import { createClient } from '@supabase/supabase-js'
+import { computeBookingRefundFields } from '../../src/lib/refund-fields'
+
+/** Bust Next.js dashboard snapshot cache after a successful sync (optional). */
+async function revalidateDashboardCache(eventFilter?: string): Promise<void> {
+  const base = process.env.DASHBOARD_APP_URL || process.env.NEXT_PUBLIC_APP_URL
+  const secret = process.env.DASHBOARD_REVALIDATE_SECRET
+  if (!base || !secret) {
+    console.log(
+      'Skipping dashboard cache revalidate (set DASHBOARD_APP_URL + DASHBOARD_REVALIDATE_SECRET)'
+    )
+    return
+  }
+
+  const eventCode =
+    eventFilter?.toUpperCase() === 'CADCNX' || eventFilter?.toUpperCase() === 'CADNYE'
+      ? eventFilter.toUpperCase()
+      : 'all'
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 15_000)
+  try {
+    const res = await fetch(`${base.replace(/\/$/, '')}/api/revalidate-dashboard`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${secret}`,
+      },
+      body: JSON.stringify({ eventCode }),
+      signal: controller.signal,
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      console.warn(`Dashboard revalidate failed: ${res.status} ${text}`)
+      return
+    }
+    console.log(`Dashboard cache revalidated (${eventCode})`)
+  } catch (err) {
+    console.warn('Dashboard revalidate error:', err)
+  } finally {
+    clearTimeout(timeout)
+  }
+}
 
 // Configuration - Use environment variables
 const WOOCOMMERCE_URL = process.env.WOOCOMMERCE_URL || ''
 const WOOCOMMERCE_CONSUMER_KEY = process.env.WOOCOMMERCE_CONSUMER_KEY || ''
 const WOOCOMMERCE_CONSUMER_SECRET = process.env.WOOCOMMERCE_CONSUMER_SECRET || ''
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-const SUPABASE_SERVICE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '' // Use service key for admin operations
+const SUPABASE_SERVICE_KEY =
+  process.env.SUPABASE_SERVICE_KEY ||
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  ''
 
 // Initialize Supabase client
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+/** Woo order statuses we pull (completed may still carry refund evidence). */
+const WOO_ORDER_STATUSES = 'completed,refunded,cancelled'
 
 interface SyncStats {
   ordersProcessed: number
@@ -37,6 +85,9 @@ interface SyncStats {
   bookingsUpdated: number
   attendeesCreated: number
   linksCreated: number
+  refundsUpserted: number
+  refundItemsUpserted: number
+  bookingsCancelledByRefund: number
   errors: string[]
 }
 
@@ -46,6 +97,11 @@ interface PickupSyncStats {
   bookingsSkipped: number
   missingInSupabase: number[]
   errors: string[]
+}
+
+interface WooMeta {
+  key: string
+  value: unknown
 }
 
 interface WooOrder {
@@ -63,48 +119,133 @@ interface WooOrder {
   line_items: Array<{
     id: number
     name: string
+    product_id?: number
     sku: string
     quantity: number
     total: string
-    meta_data: Array<{
-      key: string
-      value: any
-    }>
+    meta_data: WooMeta[]
   }>
-  meta_data: Array<{
-    key: string
-    value: any
-  }>
+  meta_data: WooMeta[]
   payment_method: string
   payment_method_title: string
+  /** Embedded summary on order payload (may be empty even when refunds exist). */
+  refunds?: Array<{ id: number; total?: string; reason?: string }>
 }
 
+interface WooRefundLineItem {
+  id: number
+  name?: string
+  sku?: string
+  quantity?: number
+  total?: string
+}
+
+interface WooRefundDetail {
+  id: number
+  date_created?: string
+  amount?: string
+  reason?: string
+  refunded_by?: number
+  refunded_payment?: boolean
+  line_items?: WooRefundLineItem[]
+}
+
+interface SkuRefundAlloc {
+  refunded: number
+  latestAt: string | null
+}
+
+interface WooEventTicket {
+  WooCommerceEventsAttendeeName?: string
+  WooCommerceEventsAttendeeLastName?: string
+}
+
+interface SimpleAttendee {
+  first_name?: string
+  firstname?: string
+  last_name?: string
+  lastname?: string
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function metaAsString(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return ''
+}
+
+function hasRoyalSilkTransfer(productExtras: unknown): boolean {
+  if (!isRecord(productExtras) || !isRecord(productExtras.groups)) return false
+
+  for (const group of Object.values(productExtras.groups)) {
+    if (!isRecord(group)) continue
+    for (const field of Object.values(group)) {
+      if (!isRecord(field)) continue
+      const label = typeof field.label === 'string' ? field.label : ''
+      if (label.toLowerCase().includes('royal silk') && field.value === '__checked__') {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+function wooAuthHeader(): string {
+  return Buffer.from(`${WOOCOMMERCE_CONSUMER_KEY}:${WOOCOMMERCE_CONSUMER_SECRET}`).toString(
+    'base64'
+  )
+}
+
+function absMoney(value: string | number | undefined | null): number {
+  const n = typeof value === 'number' ? value : parseFloat(String(value ?? '0'))
+  return Number.isFinite(n) ? Math.abs(n) : 0
+}
+
+type WooDateField = 'created' | 'modified'
+
 /**
- * Fetch orders from WooCommerce REST API
+ * Fetch orders from WooCommerce REST API.
+ * Includes completed + refunded + cancelled so we can detect refund evidence.
+ *
+ * dateField:
+ *   - created  → order placed in range (default)
+ *   - modified → order updated in range (catches older orders refunded later)
  */
 async function fetchWooCommerceOrders(
   dateFrom: string,
   dateTo: string,
   page: number = 1,
-  perPage: number = 100
+  perPage: number = 100,
+  dateField: WooDateField = 'created'
 ): Promise<WooOrder[]> {
-  const auth = Buffer.from(`${WOOCOMMERCE_CONSUMER_KEY}:${WOOCOMMERCE_CONSUMER_SECRET}`).toString('base64')
-
   const params = new URLSearchParams({
     per_page: perPage.toString(),
     page: page.toString(),
-    after: new Date(dateFrom).toISOString(),
-    before: new Date(dateTo + 'T23:59:59').toISOString(),
-    orderby: 'date',
     order: 'asc',
-    status: 'completed',
+    status: WOO_ORDER_STATUSES,
   })
+
+  const fromIso = new Date(dateFrom).toISOString()
+  const toIso = new Date(dateTo + 'T23:59:59').toISOString()
+
+  if (dateField === 'modified') {
+    params.set('modified_after', fromIso)
+    params.set('modified_before', toIso)
+    params.set('orderby', 'modified')
+  } else {
+    params.set('after', fromIso)
+    params.set('before', toIso)
+    params.set('orderby', 'date')
+  }
 
   const url = `${WOOCOMMERCE_URL}/wp-json/wc/v3/orders?${params}`
 
   const response = await fetch(url, {
     headers: {
-      'Authorization': `Basic ${auth}`,
+      Authorization: `Basic ${wooAuthHeader()}`,
       'Content-Type': 'application/json',
     },
   })
@@ -117,9 +258,54 @@ async function fetchWooCommerceOrders(
 }
 
 /**
+ * We only pull completed/refunded/cancelled orders, and all of those can carry
+ * refund ledger rows (including partial refunds on completed). Always load.
+ */
+function shouldLoadRefundDetails(): boolean {
+  return true
+}
+
+/** Full refund list + line items for an order. */
+async function fetchOrderRefunds(orderId: number): Promise<WooRefundDetail[]> {
+  const url = `${WOOCOMMERCE_URL}/wp-json/wc/v3/orders/${orderId}/refunds?per_page=100`
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Basic ${wooAuthHeader()}`,
+      'Content-Type': 'application/json',
+    },
+  })
+  if (!response.ok) {
+    throw new Error(
+      `WooCommerce refunds API error for order #${orderId}: ${response.status} ${response.statusText}`
+    )
+  }
+  const data = await response.json()
+  return Array.isArray(data) ? (data as WooRefundDetail[]) : []
+}
+
+/** Sum refund line totals by SKU (absolute currency units). */
+function allocateRefundsBySku(refunds: WooRefundDetail[]): Map<string, SkuRefundAlloc> {
+  const map = new Map<string, SkuRefundAlloc>()
+  for (const refund of refunds) {
+    for (const line of refund.line_items ?? []) {
+      const sku = (line.sku || '').trim()
+      if (!sku) continue
+      const cur = map.get(sku) || { refunded: 0, latestAt: null }
+      cur.refunded += absMoney(line.total)
+      const at = refund.date_created || null
+      if (at && (!cur.latestAt || at > cur.latestAt)) cur.latestAt = at
+      map.set(sku, cur)
+    }
+  }
+  return map
+}
+
+
+
+/**
  * Extract metadata value from WooCommerce meta_data array
  */
-function getMetaValue(metaData: Array<{ key: string; value: any }>, key: string): any {
+function getMetaValue(metaData: WooMeta[], key: string): unknown {
   const meta = metaData.find(m => m.key === key)
   return meta ? meta.value : null
 }
@@ -146,6 +332,7 @@ function parsePhoneNumber(phone: string, country: string = 'TH'): { raw: string;
 /**
  * Infer zone code and zone name from SKU suffix as a fallback
  * e.g. CADNYE2731E → { zoneCode: 'E', zone: 'Elite' }
+ * CADCNX pattern: …{YY}{DD}{zoneLetter} (e.g. CADCNX2624V → VIP)
  */
 function inferZoneFromSku(sku: string): { zoneCode: string; zone: string } | null {
   const suffixMap: Record<string, string> = {
@@ -153,11 +340,130 @@ function inferZoneFromSku(sku: string): { zoneCode: string; zone: string } | nul
     T: 'Platinum',
     G: 'Gold',
     S: 'Standard',
+    V: 'VIP',
+    P: 'Premium',
     B: 'Shabu',
+    O: 'Observer',
   }
-  const suffix = sku.slice(-1).toUpperCase()
-  if (suffixMap[suffix]) {
-    return { zoneCode: suffix, zone: suffixMap[suffix] }
+  // Handle composite suffixes like P-S after the zone letter path fails
+  const upper = sku.toUpperCase()
+  const last = upper.slice(-1)
+  if (suffixMap[last] && !upper.endsWith('P-S')) {
+    return { zoneCode: last, zone: suffixMap[last] }
+  }
+  if (upper.endsWith('P-S')) {
+    return { zoneCode: 'P', zone: 'Premium' }
+  }
+  return null
+}
+
+/**
+ * Woo rarely stores an `event_type` meta key. Default from SKU prefix so
+ * re-sync does not leave a phantom "Unknown" bucket in the dashboard.
+ */
+function inferEventTypeFromSku(sku: string): string | null {
+  const upper = sku.toUpperCase()
+  if (upper.includes('CADCNX')) return 'Yi Peng Festival'
+  if (upper.includes('CADNYE')) return 'Countdown Festival'
+  return null
+}
+
+/** product_id → YYYY-MM-DD from FooEvents product meta (cached per sync run). */
+const productEventDateCache = new Map<number, string | null>()
+
+/**
+ * CADNYE line items have no pa_date — date lives on the product:
+ * WooCommerceEventsDate / WooCommerceEventsDateMySQLFormat.
+ */
+async function fetchProductEventDate(productId: number): Promise<string | null> {
+  if (productEventDateCache.has(productId)) {
+    return productEventDateCache.get(productId) ?? null
+  }
+
+  try {
+    const url = `${WOOCOMMERCE_URL}/wp-json/wc/v3/products/${productId}?_fields=id,meta_data`
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Basic ${wooAuthHeader()}`,
+        'Content-Type': 'application/json',
+      },
+    })
+    if (!response.ok) {
+      productEventDateCache.set(productId, null)
+      return null
+    }
+    const product = (await response.json()) as { meta_data?: WooMeta[] }
+    const meta = product.meta_data ?? []
+
+    const mysql = metaAsString(getMetaValue(meta, 'WooCommerceEventsDateMySQLFormat'))
+    if (mysql && !mysql.startsWith('1970-01-01')) {
+      const day = mysql.slice(0, 10)
+      if (/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+        productEventDateCache.set(productId, day)
+        return day
+      }
+    }
+
+    const human = metaAsString(getMetaValue(meta, 'WooCommerceEventsDate'))
+    if (human) {
+      // "December 31, 2026"
+      const parsed = Date.parse(human)
+      if (!Number.isNaN(parsed)) {
+        const d = new Date(parsed)
+        const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+        productEventDateCache.set(productId, day)
+        return day
+      }
+    }
+
+    productEventDateCache.set(productId, null)
+    return null
+  } catch {
+    productEventDateCache.set(productId, null)
+    return null
+  }
+}
+
+/**
+ * Fallback when Woo has no date meta.
+ * Latest SKU scheme is year-then-day: CADCNX2624V → 2026-11-24, CADNYE2731S → countdown
+ * brand year 27 → event night 2026-12-31 (Dec 31 of brandYear-1).
+ * Older CADCNX used day-then-year (1524 → 15 Nov 2024) — prefer pa_date for those.
+ */
+function inferEventDateFromSku(sku: string): string | null {
+  const upper = sku.toUpperCase()
+
+  // CADNYE{YY}{DD}{zone} — event night is always Dec 31 of the year before brand YY
+  // e.g. CADNYE2731S (countdown 2027) → 2026-12-31
+  const nye = upper.match(/^CADNYE(\d{2})(\d{2})([A-Z]|P-S)$/i)
+  if (nye) {
+    const brandYear = 2000 + parseInt(nye[1], 10)
+    return `${brandYear - 1}-12-31`
+  }
+
+  // CADCNX{YY}{DD}{zone} — current season (YY >= 26) is year-then-day in November
+  const cnx = upper.match(/^CADCNX(\d{2})(\d{2})([A-Z]|P-S)$/i)
+  if (cnx) {
+    const yy = parseInt(cnx[1], 10)
+    const dd = parseInt(cnx[2], 10)
+    if (yy >= 26 && dd >= 1 && dd <= 31) {
+      return `20${String(yy).padStart(2, '0')}-11-${String(dd).padStart(2, '0')}`
+    }
+  }
+
+  return null
+}
+
+function lineItemProductId(lineItem: {
+  product_id?: number
+  meta_data: WooMeta[]
+}): number | null {
+  if (lineItem.product_id && lineItem.product_id > 0) return lineItem.product_id
+  const extras = getMetaValue(lineItem.meta_data, 'product_extras')
+  if (isRecord(extras) && typeof extras.product_id === 'number') return extras.product_id
+  if (isRecord(extras) && typeof extras.product_id === 'string') {
+    const n = parseInt(extras.product_id, 10)
+    return Number.isFinite(n) ? n : null
   }
   return null
 }
@@ -264,9 +570,134 @@ function calculateFees(total: number, paymentMethod: string): number {
 /**
  * Sync a single order to Supabase
  */
+async function upsertOrderRefunds(
+  order: WooOrder,
+  refunds: WooRefundDetail[],
+  bookingIdBySku: Map<string, number>,
+  stats: SyncStats,
+  dryRun: boolean
+): Promise<void> {
+  for (const refund of refunds) {
+    const amount = absMoney(refund.amount)
+    const refundRow = {
+      woo_order_id: order.id,
+      woo_refund_id: refund.id,
+      woo_status: order.status,
+      amount,
+      reason: refund.reason || null,
+      refunded_at: refund.date_created || null,
+      refunded_by: refund.refunded_by ?? null,
+      refunded_payment: refund.refunded_payment ?? null,
+      raw: refund as unknown as Record<string, unknown>,
+    }
+
+    if (dryRun) {
+      console.log(`  [DRY RUN] Would upsert refund #${refund.id} amount=${amount}`)
+      stats.refundsUpserted++
+      for (const line of refund.line_items ?? []) {
+        if (!line.sku) continue
+        console.log(
+          `  [DRY RUN] Would upsert refund item sku=${line.sku} total=${absMoney(line.total)} → booking ${bookingIdBySku.get(line.sku) ?? 'unmatched'}`
+        )
+        stats.refundItemsUpserted++
+      }
+      continue
+    }
+
+    const { data: existing } = await supabase
+      .from('cad_yip_refunds')
+      .select('id')
+      .eq('woo_refund_id', refund.id)
+      .maybeSingle()
+
+    let refundId: number
+    if (existing?.id) {
+      const { error } = await supabase
+        .from('cad_yip_refunds')
+        .update(refundRow)
+        .eq('id', existing.id)
+      if (error) throw error
+      refundId = existing.id
+    } else {
+      const { data, error } = await supabase
+        .from('cad_yip_refunds')
+        .insert(refundRow)
+        .select('id')
+        .single()
+      if (error) throw error
+      refundId = data.id
+    }
+    stats.refundsUpserted++
+
+    for (const line of refund.line_items ?? []) {
+      const sku = (line.sku || '').trim()
+      const line_total = absMoney(line.total)
+      const booking_id = sku ? bookingIdBySku.get(sku) ?? null : null
+      const itemRow = {
+        refund_id: refundId,
+        woo_refund_id: refund.id,
+        woo_order_id: order.id,
+        woo_line_item_id: line.id ?? null,
+        sku: sku || null,
+        product_name: line.name || null,
+        quantity: line.quantity ?? null,
+        line_total,
+        booking_id,
+      }
+
+      if (line.id != null) {
+        const { data: existingItem } = await supabase
+          .from('cad_yip_refund_items')
+          .select('id')
+          .eq('woo_refund_id', refund.id)
+          .eq('woo_line_item_id', line.id)
+          .maybeSingle()
+
+        if (existingItem?.id) {
+          const { error } = await supabase
+            .from('cad_yip_refund_items')
+            .update(itemRow)
+            .eq('id', existingItem.id)
+          if (error) throw error
+        } else {
+          const { error } = await supabase.from('cad_yip_refund_items').insert(itemRow)
+          if (error) throw error
+        }
+      } else {
+        const { error } = await supabase.from('cad_yip_refund_items').insert(itemRow)
+        if (error) throw error
+      }
+      stats.refundItemsUpserted++
+    }
+  }
+}
+
+/**
+ * Sync a single order to Supabase
+ */
 async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = false): Promise<void> {
   try {
-    console.log(`Processing order #${order.id}${dryRun ? ' [DRY RUN]' : ''}...`)
+    console.log(
+      `Processing order #${order.id} [${order.status}]${dryRun ? ' [DRY RUN]' : ''}...`
+    )
+
+    // Refund evidence: status or embedded refunds[]
+    let refunds: WooRefundDetail[] = []
+    if (shouldLoadRefundDetails()) {
+      try {
+        refunds = await fetchOrderRefunds(order.id)
+        console.log(`  Refunds loaded: ${refunds.length}`)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`  Warning: could not load refunds for #${order.id}: ${msg}`)
+        stats.errors.push(`Order #${order.id} refunds: ${msg}`)
+      }
+    }
+
+    const refundBySku = allocateRefundsBySku(refunds)
+
+    const bookingIdBySku = new Map<string, number>()
+    const nowIso = new Date().toISOString()
 
     // Process each line item as a separate booking
     for (const lineItem of order.line_items) {
@@ -276,26 +707,17 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
       }
 
       // Extract metadata from line item
-      const seat = getMetaValue(lineItem.meta_data, 'seat') || getMetaValue(lineItem.meta_data, 'pa_seat')
+      const seat =
+        metaAsString(getMetaValue(lineItem.meta_data, 'seat')) ||
+        metaAsString(getMetaValue(lineItem.meta_data, 'pa_seat'))
 
       // Check for RSH transfer by looking at product_extras for "Royal Silk" checkbox
-      const productExtras = getMetaValue(lineItem.meta_data, 'product_extras')
-      let isRshTransfer = false
-      if (productExtras && productExtras.groups) {
-        // Check all groups for Royal Silk transfer
-        Object.values(productExtras.groups).forEach((group: any) => {
-          Object.values(group).forEach((field: any) => {
-            if (field.label && field.label.toLowerCase().includes('royal silk') && field.value === '__checked__') {
-              isRshTransfer = true
-            }
-          })
-        })
-      }
+      const isRshTransfer = hasRoyalSilkTransfer(getMetaValue(lineItem.meta_data, 'product_extras'))
 
       // Extract pickup location from order-level metadata
       const rshPickupLater = getMetaValue(order.meta_data, '_rsh_pickup_later') === '1'
-      const rshHotelName = getMetaValue(order.meta_data, '_rsh_hotel_name')
-      const rshPickupType = getMetaValue(order.meta_data, '_rsh_pickup_type')
+      const rshHotelName = metaAsString(getMetaValue(order.meta_data, '_rsh_hotel_name'))
+      const rshPickupType = metaAsString(getMetaValue(order.meta_data, '_rsh_pickup_type'))
 
       let pickupLoc = ''
       if (isRshTransfer) {
@@ -307,25 +729,65 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
       }
       // Fallback to line item metadata if no RSH pickup info
       if (!pickupLoc) {
-        pickupLoc = getMetaValue(lineItem.meta_data, 'pickup_location') || getMetaValue(lineItem.meta_data, 'pa_pickup') || ''
+        pickupLoc =
+          metaAsString(getMetaValue(lineItem.meta_data, 'pickup_location')) ||
+          metaAsString(getMetaValue(lineItem.meta_data, 'pa_pickup'))
       }
 
-      // Extract event date from pa_date variation
-      let eventDate = getMetaValue(lineItem.meta_data, 'pa_date')
+      // Event date: Yi Peng uses pa_date; CADNYE has no variation date — use product FooEvents.
+      let eventDate: string | null = metaAsString(getMetaValue(lineItem.meta_data, 'pa_date')) || null
       if (eventDate) {
         // Convert from "25-november-2026" format to "2026-11-25" format
         eventDate = convertEventDate(eventDate)
       }
       if (!eventDate) {
-        eventDate = getMetaValue(lineItem.meta_data, 'event_date') || getMetaValue(order.meta_data, 'event_date')
+        const raw =
+          metaAsString(getMetaValue(lineItem.meta_data, 'event_date')) ||
+          metaAsString(getMetaValue(order.meta_data, 'event_date')) ||
+          null
+        eventDate = raw ? convertEventDate(raw) || raw : null
+      }
+      if (!eventDate) {
+        const productId = lineItemProductId(lineItem)
+        if (productId) {
+          eventDate = await fetchProductEventDate(productId)
+        }
+      }
+      if (!eventDate) {
+        eventDate = inferEventDateFromSku(lineItem.sku)
       }
 
-      const metaZoneCode = getMetaValue(lineItem.meta_data, 'zone_code') || getMetaValue(lineItem.meta_data, 'pa_zone')
-      const metaZone = getMetaValue(lineItem.meta_data, 'zone') || getMetaValue(lineItem.meta_data, 'pa_zone_name')
+      const typeLabel = metaAsString(getMetaValue(lineItem.meta_data, 'type'))
+      const typeZoneMap: Record<string, { zoneCode: string; zone: string }> = {
+        elite: { zoneCode: 'E', zone: 'Elite' },
+        platinum: { zoneCode: 'T', zone: 'Platinum' },
+        gold: { zoneCode: 'G', zone: 'Gold' },
+        standard: { zoneCode: 'S', zone: 'Standard' },
+        vip: { zoneCode: 'V', zone: 'VIP' },
+        premium: { zoneCode: 'P', zone: 'Premium' },
+        shabu: { zoneCode: 'B', zone: 'Shabu' },
+        observer: { zoneCode: 'O', zone: 'Observer' },
+      }
+      const typeZone = typeLabel ? typeZoneMap[typeLabel.toLowerCase()] : null
+
+      const metaZoneCode =
+        metaAsString(getMetaValue(lineItem.meta_data, 'zone_code')) ||
+        metaAsString(getMetaValue(lineItem.meta_data, 'pa_zone')) ||
+        typeZone?.zoneCode ||
+        null
+      const metaZone =
+        metaAsString(getMetaValue(lineItem.meta_data, 'zone')) ||
+        metaAsString(getMetaValue(lineItem.meta_data, 'pa_zone_name')) ||
+        typeZone?.zone ||
+        null
       const inferredZone = (!metaZoneCode || !metaZone) ? inferZoneFromSku(lineItem.sku) : null
       const zoneCode = metaZoneCode || inferredZone?.zoneCode || null
       const zone = metaZone || inferredZone?.zone || null
-      const eventType = getMetaValue(lineItem.meta_data, 'event_type') || getMetaValue(order.meta_data, 'event_type')
+      const eventType =
+        metaAsString(getMetaValue(lineItem.meta_data, 'event_type')) ||
+        metaAsString(getMetaValue(order.meta_data, 'event_type')) ||
+        inferEventTypeFromSku(lineItem.sku) ||
+        null
 
       // Parse phone number
       const phone = parsePhoneNumber(order.billing.phone, order.billing.country)
@@ -339,23 +801,105 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
       // Check if booking already exists
       const { data: existingBooking } = await supabase
         .from('cad_yip_bookings')
-        .select('id')
+        .select(
+          'id, cancel_source, is_cancelled, seat, pickup_loc, child_count, amount_refunded, amount_net, refund_status, refunded_at, cancelled_at'
+        )
         .eq('woo_id', order.id)
         .eq('sku', lineItem.sku)
-        .single()
+        .maybeSingle()
+
+      const skuAlloc = refundBySku.get(lineItem.sku)
+      let refundFields = computeBookingRefundFields(itemTotal, skuAlloc, order.status)
+
+      // If this sync did not load refunds (or Woo returned empty) but DB already has
+      // refund money, keep the stronger evidence instead of clearing it.
+      if (
+        !skuAlloc &&
+        existingBooking &&
+        Number(existingBooking.amount_refunded) > 0
+      ) {
+        refundFields = {
+          ...refundFields,
+          amount_refunded: Number(existingBooking.amount_refunded),
+          amount_net:
+            existingBooking.amount_net != null
+              ? Number(existingBooking.amount_net)
+              : Math.max(0, itemTotal - Number(existingBooking.amount_refunded)),
+          refund_status: (existingBooking.refund_status as
+            | 'none'
+            | 'partial'
+            | 'full') || 'partial',
+          is_cancelled: true,
+          cancel_source: 'woo',
+          cancelled_at: existingBooking.cancelled_at || nowIso,
+          refunded_at: existingBooking.refunded_at || null,
+        }
+      }
+
+      // Dashboard cancel is sticky: Woo cannot un-cancel unless it also has refund evidence
+      const dashboardSticky =
+        existingBooking?.cancel_source === 'dashboard' && existingBooking?.is_cancelled === true
+      const is_cancelled = refundFields.is_cancelled || dashboardSticky
+      const cancel_source = refundFields.is_cancelled
+        ? 'woo'
+        : dashboardSticky
+          ? 'dashboard'
+          : null
+
+      if (refundFields.is_cancelled) {
+        stats.bookingsCancelledByRefund++
+        console.log(
+          `  Refund → cancel sku=${lineItem.sku} status=${refundFields.refund_status} refunded=${refundFields.amount_refunded}`
+        )
+      }
+
+      // DB has country check (ISO codes); empty string fails constraint
+      const countryCode =
+        order.billing.country && /^[A-Z]{2}$/i.test(order.billing.country.trim())
+          ? order.billing.country.trim().toUpperCase()
+          : null
+
+      // Dashboard is source of truth once ops set seat/pickup/child_count.
+      // Prefer existing non-empty values so Woo meta cannot overwrite ops edits.
+      const seatToWrite =
+        (existingBooking?.seat && String(existingBooking.seat).trim()) ||
+        seat ||
+        ''
+      const pickupToWrite =
+        (existingBooking?.pickup_loc &&
+          String(existingBooking.pickup_loc).trim()) ||
+        pickupLoc ||
+        ''
+      const childCountToWrite =
+        typeof existingBooking?.child_count === 'number'
+          ? existingBooking.child_count
+          : 0
+
+      // Preserve original cancel timestamp (dashboard sticky must not move cancelled_at).
+      const cancelledAtToWrite = is_cancelled
+        ? refundFields.cancelled_at ||
+          existingBooking?.cancelled_at ||
+          nowIso
+        : null
 
       const bookingData = {
         woo_id: order.id,
+        // Real Woo order time — dashboard monthly/daily use this (not Supabase created_at)
+        order_created_at: order.date_created
+          ? new Date(order.date_created).toISOString()
+          : null,
         firstname: order.billing.first_name,
         lastname: order.billing.last_name,
         email: order.billing.email,
         phone_raw: phone.raw,
         phone_e164: phone.e164,
-        country: order.billing.country,
+        country: countryCode,
         sku: lineItem.sku,
-        seat,
+        seat: seatToWrite,
         is_rsh_transfer: isRshTransfer,
-        pickup_loc: pickupLoc,
+        pickup_loc: pickupToWrite,
+        // Never invent children from Woo — free ticket pax, manual for pickup capacity.
+        child_count: childCountToWrite,
         amount: itemTotal,
         commission,
         fees,
@@ -364,6 +908,15 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
         zone_code: zoneCode,
         zone,
         event_type: eventType,
+        is_cancelled,
+        amount_refunded: refundFields.amount_refunded,
+        amount_net: refundFields.amount_net,
+        woo_status: refundFields.woo_status,
+        refund_status: refundFields.refund_status,
+        cancel_source,
+        cancelled_at: cancelledAtToWrite,
+        refunded_at: refundFields.refunded_at,
+        last_synced_at: nowIso,
       }
 
       let bookingId: number
@@ -405,16 +958,22 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
         stats.bookingsCreated++
       }
 
+      if (bookingId && lineItem.sku) {
+        bookingIdBySku.set(lineItem.sku, bookingId)
+      }
+
       // Sync attendees from WooCommerceEventsOrderTickets
       const wooEventsTickets = getMetaValue(order.meta_data, 'WooCommerceEventsOrderTickets')
       const attendees: Array<{ firstname: string; lastname: string }> = []
 
-      if (wooEventsTickets) {
+      if (isRecord(wooEventsTickets)) {
         // Iterate through line items in the events tickets structure
-        Object.values(wooEventsTickets).forEach((lineItemTickets: any) => {
-          if (typeof lineItemTickets === 'object') {
+        Object.values(wooEventsTickets).forEach((lineItemTickets) => {
+          if (isRecord(lineItemTickets)) {
             // Iterate through individual ticket holders
-            Object.values(lineItemTickets).forEach((ticket: any) => {
+            Object.values(lineItemTickets).forEach((ticketValue) => {
+              if (!isRecord(ticketValue)) return
+              const ticket = ticketValue as WooEventTicket
               if (ticket.WooCommerceEventsAttendeeName) {
                 attendees.push({
                   firstname: ticket.WooCommerceEventsAttendeeName || '',
@@ -428,10 +987,14 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
 
       // Fallback to simpler attendee structure if WooCommerceEvents not found
       if (attendees.length === 0) {
-        const simpleAttendees = getMetaValue(lineItem.meta_data, 'attendees') ||
-                               getMetaValue(lineItem.meta_data, '_attendees') || []
+        const simpleAttendees =
+          getMetaValue(lineItem.meta_data, 'attendees') ??
+          getMetaValue(lineItem.meta_data, '_attendees') ??
+          []
         if (Array.isArray(simpleAttendees)) {
-          simpleAttendees.forEach((attendee: any) => {
+          simpleAttendees.forEach((attendeeValue) => {
+            if (!isRecord(attendeeValue)) return
+            const attendee = attendeeValue as SimpleAttendee
             attendees.push({
               firstname: attendee.first_name || attendee.firstname || '',
               lastname: attendee.last_name || attendee.lastname || '',
@@ -479,16 +1042,24 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
       let links: string[] = []
 
       if (Array.isArray(eticketUrls) && eticketUrls.length > 0) {
-        links = eticketUrls.filter((url: any) => typeof url === 'string' && url.trim() !== '')
+        links = eticketUrls.filter((url): url is string => typeof url === 'string' && url.trim() !== '')
       }
 
       // Fallback to other link metadata
       if (links.length === 0) {
-        const fallbackLinks = getMetaValue(lineItem.meta_data, 'links') ||
-                             getMetaValue(lineItem.meta_data, '_links') ||
-                             getMetaValue(order.meta_data, 'booking_links') || []
+        const fallbackLinks =
+          getMetaValue(lineItem.meta_data, 'links') ??
+          getMetaValue(lineItem.meta_data, '_links') ??
+          getMetaValue(order.meta_data, 'booking_links') ??
+          []
         if (Array.isArray(fallbackLinks)) {
-          links = fallbackLinks.map((link: any) => typeof link === 'string' ? link : link.url).filter(Boolean)
+          links = fallbackLinks
+            .map((link): string | null => {
+              if (typeof link === 'string') return link
+              if (isRecord(link) && typeof link.url === 'string') return link.url
+              return null
+            })
+            .filter((url): url is string => Boolean(url))
         }
       }
 
@@ -528,9 +1099,20 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
       }
     }
 
+    // Persist refund ledger after bookings exist (for booking_id links)
+    if (refunds.length > 0) {
+      await upsertOrderRefunds(order, refunds, bookingIdBySku, stats, dryRun)
+    }
+
     stats.ordersProcessed++
   } catch (error) {
-    const errorMsg = `Error processing order #${order.id}: ${error}`
+    const detail =
+      error instanceof Error
+        ? error.message
+        : typeof error === 'object' && error && 'message' in error
+          ? String((error as { message: unknown }).message)
+          : JSON.stringify(error)
+    const errorMsg = `Error processing order #${order.id}: ${detail}`
     console.error(errorMsg)
     stats.errors.push(errorMsg)
   }
@@ -544,12 +1126,13 @@ async function syncWooCommerce(
   dateTo: string,
   eventFilter?: string,
   dryRun: boolean = false,
-  limit?: number
+  limit?: number,
+  dateField: WooDateField = 'created'
 ): Promise<void> {
   console.log('='.repeat(60))
   console.log(`WooCommerce to Supabase Sync${dryRun ? ' [DRY RUN MODE]' : ''}`)
   console.log('='.repeat(60))
-  console.log(`Date Range: ${dateFrom} to ${dateTo}`)
+  console.log(`Date Range: ${dateFrom} to ${dateTo} (by order ${dateField})`)
   if (eventFilter) {
     console.log(`Event Filter: ${eventFilter}`)
   }
@@ -578,6 +1161,9 @@ async function syncWooCommerce(
     bookingsUpdated: 0,
     attendeesCreated: 0,
     linksCreated: 0,
+    refundsUpserted: 0,
+    refundItemsUpserted: 0,
+    bookingsCancelledByRefund: 0,
     errors: [],
   }
 
@@ -587,7 +1173,7 @@ async function syncWooCommerce(
 
     while (hasMore) {
       console.log(`Fetching page ${page}...`)
-      const orders = await fetchWooCommerceOrders(dateFrom, dateTo, page)
+      const orders = await fetchWooCommerceOrders(dateFrom, dateTo, page, 100, dateField)
 
       if (orders.length === 0) {
         hasMore = false
@@ -632,6 +1218,9 @@ async function syncWooCommerce(
     console.log(`Orders Processed: ${stats.ordersProcessed}`)
     console.log(`Bookings Created: ${stats.bookingsCreated}`)
     console.log(`Bookings Updated: ${stats.bookingsUpdated}`)
+    console.log(`Bookings cancelled by refund: ${stats.bookingsCancelledByRefund}`)
+    console.log(`Refunds upserted: ${stats.refundsUpserted}`)
+    console.log(`Refund items upserted: ${stats.refundItemsUpserted}`)
     console.log(`Attendees Created: ${stats.attendeesCreated}`)
     console.log(`Links Created: ${stats.linksCreated}`)
 
@@ -640,6 +1229,10 @@ async function syncWooCommerce(
       console.log('')
       console.log('Error Details:')
       stats.errors.forEach(error => console.log(`  - ${error}`))
+    }
+
+    if (!dryRun) {
+      await revalidateDashboardCache(eventFilter)
     }
   } catch (error) {
     console.error('Sync failed:', error)
@@ -657,8 +1250,8 @@ async function syncOrderPickupOnly(order: WooOrder, stats: PickupSyncStats, dryR
 
     // Extract pickup info from order-level metadata (same logic as full sync)
     const rshPickupLater = getMetaValue(order.meta_data, '_rsh_pickup_later') === '1'
-    const rshHotelName = getMetaValue(order.meta_data, '_rsh_hotel_name')
-    const rshPickupType = getMetaValue(order.meta_data, '_rsh_pickup_type')
+    const rshHotelName = metaAsString(getMetaValue(order.meta_data, '_rsh_hotel_name'))
+    const rshPickupType = metaAsString(getMetaValue(order.meta_data, '_rsh_pickup_type'))
 
     let hasRshLineItem = false
 
@@ -666,17 +1259,7 @@ async function syncOrderPickupOnly(order: WooOrder, stats: PickupSyncStats, dryR
       if (!lineItem.sku) continue
 
       // Check if this line item is an RSH transfer
-      const productExtras = getMetaValue(lineItem.meta_data, 'product_extras')
-      let isRshTransfer = false
-      if (productExtras && productExtras.groups) {
-        Object.values(productExtras.groups).forEach((group: any) => {
-          Object.values(group).forEach((field: any) => {
-            if (field.label && field.label.toLowerCase().includes('royal silk') && field.value === '__checked__') {
-              isRshTransfer = true
-            }
-          })
-        })
-      }
+      const isRshTransfer = hasRoyalSilkTransfer(getMetaValue(lineItem.meta_data, 'product_extras'))
 
       if (!isRshTransfer) {
         console.log(`  Skipping line item ${lineItem.sku} (not RSH transfer)`)
@@ -695,7 +1278,9 @@ async function syncOrderPickupOnly(order: WooOrder, stats: PickupSyncStats, dryR
 
       // Fallback to line item metadata if no RSH pickup info
       if (!pickupLoc) {
-        pickupLoc = getMetaValue(lineItem.meta_data, 'pickup_location') || getMetaValue(lineItem.meta_data, 'pa_pickup') || ''
+        pickupLoc =
+          metaAsString(getMetaValue(lineItem.meta_data, 'pickup_location')) ||
+          metaAsString(getMetaValue(lineItem.meta_data, 'pa_pickup'))
       }
 
       // Find the existing booking
@@ -796,7 +1381,7 @@ async function syncPickupOnly(
 
   while (hasMore) {
     console.log(`Fetching page ${page}...`)
-    const orders = await fetchWooCommerceOrders(dateFrom, dateTo, page)
+    const orders = await fetchWooCommerceOrders(dateFrom, dateTo, page, 100, 'created')
 
     if (orders.length === 0) {
       hasMore = false
@@ -850,6 +1435,10 @@ async function syncPickupOnly(
     console.log('Error Details:')
     stats.errors.forEach(e => console.log(`  - ${e}`))
   }
+
+  if (!dryRun && stats.bookingsUpdated > 0) {
+    await revalidateDashboardCache(eventFilter)
+  }
 }
 
 // Parse command line arguments
@@ -869,6 +1458,14 @@ const limitStr = getArg('limit')
 const limit = limitStr ? parseInt(limitStr, 10) : undefined
 const dryRun = hasFlag('dry-run')
 const pickupOnly = hasFlag('pickup-only')
+const dateFieldArg = (getArg('date-field') || 'created').toLowerCase()
+if (dateFieldArg !== 'created' && dateFieldArg !== 'modified') {
+  console.error(
+    `Invalid --date-field=${dateFieldArg}. Use created (default) or modified.`
+  )
+  process.exit(1)
+}
+const dateField: WooDateField = dateFieldArg
 
 if (!dateFrom || !dateTo) {
   console.error('Usage: npm run sync:woo -- --from=YYYY-MM-DD --to=YYYY-MM-DD [OPTIONS]')
@@ -876,6 +1473,7 @@ if (!dateFrom || !dateTo) {
   console.error('Options:')
   console.error('  --from=DATE        Start date (YYYY-MM-DD)')
   console.error('  --to=DATE          End date (YYYY-MM-DD)')
+  console.error('  --date-field=MODE  created (default) | modified — use modified for refund catch-up')
   console.error('  --event=CODE       Filter by event code (CADCNX or CADNYE)')
   console.error('  --limit=N          Process maximum N orders (useful for testing)')
   console.error('  --dry-run          Preview changes without writing to database')
@@ -884,6 +1482,7 @@ if (!dateFrom || !dateTo) {
   console.error('Examples:')
   console.error('  npm run sync:woo -- --from=2024-01-01 --to=2024-12-31 --dry-run')
   console.error('  npm run sync:woo -- --from=2024-01-01 --to=2024-12-31 --event=CADCNX --limit=5')
+  console.error('  npm run sync:woo -- --from=2026-06-01 --to=2026-08-05 --date-field=modified')
   console.error('  npm run sync:woo -- --from=2024-01-01 --to=2024-12-31 --pickup-only --dry-run')
   process.exit(1)
 }
@@ -891,7 +1490,7 @@ if (!dateFrom || !dateTo) {
 // Run sync
 const runner = pickupOnly
   ? syncPickupOnly(dateFrom, dateTo, eventFilter, dryRun, limit)
-  : syncWooCommerce(dateFrom, dateTo, eventFilter, dryRun, limit)
+  : syncWooCommerce(dateFrom, dateTo, eventFilter, dryRun, limit, dateField)
 
 runner
   .then(() => {

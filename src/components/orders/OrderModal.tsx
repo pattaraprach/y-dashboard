@@ -1,262 +1,455 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import {
+  setBookingCancelled,
+  updateBookingOpsFields,
+} from '@/app/actions/bookings'
 import { supabase } from '@/lib/supabase'
-import { formatCurrency, formatDate } from '@/lib/utils'
-import type { Booking, Attendee } from '@/types/database'
+import { getChildCount } from '@/lib/child-count'
+import {
+  buildGroupedExportText,
+  formatAttendeeName,
+  formatCurrency,
+  formatCustomerName,
+  formatDate,
+} from '@/lib/utils'
+import type { Attendee, BookingWithAttendees } from '@/types/database'
+import { Badge } from '@/components/reui/badge'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Separator } from '@/components/ui/separator'
+import { Spinner } from '@/components/ui/spinner'
 
 interface OrderModalProps {
-    booking: Booking | null
-    onClose: () => void
-    onUpdate: () => void
+  booking: BookingWithAttendees | null
+  onClose: () => void
+  onUpdate: () => void
 }
 
 export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
-    const [seat, setSeat] = useState(booking?.seat || '')
-    const [pickupLoc, setPickupLoc] = useState(booking?.pickup_loc || '')
-    const [isSaving, setIsSaving] = useState(false)
-    const [attendees, setAttendees] = useState<Attendee[]>([])
-    const [error, setError] = useState<string | null>(null)
+  // Parent remounts via `key={booking.id}` so local state can init from props.
+  const [seat, setSeat] = useState(booking?.seat || '')
+  const [pickupLoc, setPickupLoc] = useState(booking?.pickup_loc || '')
+  const [childCount, setChildCount] = useState(
+    booking ? getChildCount(booking) : 0
+  )
+  const [isCancelled, setIsCancelled] = useState(booking?.is_cancelled ?? false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [isTogglingCancel, setIsTogglingCancel] = useState(false)
+  const [attendees, setAttendees] = useState<Attendee[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null)
 
-    useEffect(() => {
-        async function fetchAttendees() {
-            if (!booking) return
+  useEffect(() => {
+    if (!booking) return
 
-            const { data, error } = await supabase
-                .from('cad_yip_attendees')
-                .select('*')
-                .eq('booking_id', booking.id)
-                .order('id')
+    let cancelled = false
+    const timer = setTimeout(() => {
+      void (async () => {
+        const { data, error: fetchError } = await supabase
+          .from('cad_yip_attendees')
+          .select('*')
+          .eq('booking_id', booking.id)
+          .order('id')
 
-            if (error) {
-                console.error('Error fetching attendees:', error)
-            } else {
-                setAttendees((data as Attendee[]) || [])
-            }
-        }
-
-        if (booking) {
-            fetchAttendees()
-        }
-    }, [booking])
-
-    async function handleSave() {
-        if (!booking) return
-
-        setIsSaving(true)
-        setError(null)
-
-        const { error } = await supabase
-            .from('cad_yip_bookings')
-            .update({ seat, pickup_loc: pickupLoc } as Record<string, unknown>)
-            .eq('id', booking.id)
-
-        setIsSaving(false)
-
-        if (error) {
-            setError('Failed to save changes. Please try again.')
-            console.error('Error updating booking:', error)
+        if (cancelled) return
+        if (fetchError) {
+          console.error('Error fetching attendees:', fetchError)
         } else {
-            onUpdate()
-            onClose()
+          setAttendees((data as Attendee[]) || [])
         }
+      })()
+    }, 0)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [booking])
+
+  async function handleSave() {
+    if (!booking) return
+    setIsSaving(true)
+    setError(null)
+
+    try {
+      // Allowlisted server action — never open-ended client column updates.
+      const result = await updateBookingOpsFields({
+        bookingId: booking.id,
+        seat,
+        pickupLoc,
+        childCount: booking.is_rsh_transfer ? childCount : 0,
+      })
+
+      if (!result.ok) {
+        setError(result.error || 'Failed to save changes. Please try again.')
+      } else {
+        onUpdate()
+        onClose()
+      }
+    } catch {
+      setError('Failed to save changes. Please try again.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  async function handleToggleCancelled() {
+    if (!booking) return
+
+    const next = !isCancelled
+    const hasWooRefund =
+      Boolean(booking.refund_status) && booking.refund_status !== 'none'
+
+    // Block restore when Woo refund evidence remains — no DB write, no resync.
+    if (!next && hasWooRefund) {
+      setError('This booking still has Woo refund evidence and stays cancelled.')
+      return
     }
 
-    if (!booking) return null
+    if (
+      !window.confirm(
+        next
+          ? `Mark order #${booking.woo_id} as cancelled? It will be excluded from dashboard metrics.`
+          : `Restore order #${booking.woo_id} as active?`
+      )
+    ) {
+      return
+    }
 
-    return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-                {/* Header */}
-                <div className="flex items-center justify-between mb-6">
-                    <div>
-                        <h2 className="text-xl font-bold text-[var(--foreground)]">
-                            Order #{booking.woo_id}
-                        </h2>
-                        <p className="text-sm text-[var(--foreground-secondary)]">
-                            Created {formatDate(booking.created_at)}
-                        </p>
+    setIsTogglingCancel(true)
+    setError(null)
+
+    try {
+      const result = await setBookingCancelled({
+        bookingId: booking.id,
+        cancelled: next,
+      })
+
+      if (!result.ok) {
+        setError(result.error || `Failed to ${next ? 'cancel' : 'restore'} booking.`)
+        return
+      }
+
+      setIsCancelled(result.is_cancelled)
+      onUpdate()
+    } catch {
+      setError(`Failed to ${next ? 'cancel' : 'restore'} booking.`)
+    } finally {
+      setIsTogglingCancel(false)
+    }
+  }
+
+  function partyTextForBooking() {
+    if (!booking) return ''
+    const withAttendees: BookingWithAttendees = {
+      ...booking,
+      is_cancelled: isCancelled,
+      cad_yip_attendees:
+        attendees.length > 0
+          ? attendees.map((a) => ({
+              id: a.id,
+              attendee_firstname: a.attendee_firstname,
+              attendee_lastname: a.attendee_lastname,
+            }))
+          : booking.cad_yip_attendees,
+      seat,
+      pickup_loc: pickupLoc,
+      child_count: booking.is_rsh_transfer ? childCount : 0,
+    }
+    return buildGroupedExportText([withAttendees], {
+      seat,
+      pickup: pickupLoc,
+      childCount: booking.is_rsh_transfer ? childCount : 0,
+    })
+  }
+
+  async function handleCopyParty() {
+    if (!booking) return
+    try {
+      await navigator.clipboard.writeText(partyTextForBooking())
+      setCopyFeedback('Copied')
+      setTimeout(() => setCopyFeedback(null), 1500)
+    } catch {
+      setError('Could not copy to clipboard.')
+    }
+  }
+
+  const open = Boolean(booking)
+  const customerName = booking ? formatCustomerName(booking) : ''
+  const partyLines = partyTextForBooking()
+    ? partyTextForBooking().split('\n')
+    : []
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg" showCloseButton>
+        {booking ? (
+          <>
+            <DialogHeader>
+              <div className="flex flex-wrap items-center gap-2 pr-8">
+                <DialogTitle>Order #{booking.woo_id}</DialogTitle>
+                {!isCancelled ? (
+                  <Badge variant="success-light" size="sm">
+                    Active
+                  </Badge>
+                ) : booking.refund_status === 'partial' ? (
+                  <Badge variant="warning-light" size="sm">
+                    Partial refund
+                  </Badge>
+                ) : booking.refund_status === 'full' ? (
+                  <Badge variant="destructive-light" size="sm">
+                    Refunded
+                  </Badge>
+                ) : (
+                  <Badge variant="destructive-light" size="sm">
+                    Cancelled
+                  </Badge>
+                )}
+                {booking.woo_status ? (
+                  <Badge variant="outline" size="sm">
+                    Woo: {booking.woo_status}
+                  </Badge>
+                ) : null}
+              </div>
+              <DialogDescription>
+                Created {formatDate(booking.created_at)}
+                {booking.refunded_at
+                  ? ` · Refunded ${formatDate(booking.refunded_at)}`
+                  : ''}
+                {booking.amount_refunded && booking.amount_refunded > 0
+                  ? ` · Refunded ${formatCurrency(booking.amount_refunded)}`
+                  : ''}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <section className="rounded-lg border bg-muted/30 p-3">
+                <h3 className="mb-2 text-xs font-medium text-muted-foreground">
+                  Customer
+                </h3>
+                <dl className="space-y-1.5 text-sm">
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-muted-foreground">Name</dt>
+                    <dd className="font-medium text-right">{customerName || '—'}</dd>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-muted-foreground">Email</dt>
+                    <dd className="text-right break-all">{booking.email || '—'}</dd>
+                  </div>
+                  {booking.phone_e164 ? (
+                    <div className="flex justify-between gap-4">
+                      <dt className="text-muted-foreground">Phone</dt>
+                      <dd>{booking.phone_e164}</dd>
                     </div>
-                    <button
-                        onClick={onClose}
-                        className="p-2 rounded-lg hover:bg-[var(--background-tertiary)] transition-colors"
+                  ) : null}
+                </dl>
+              </section>
+
+              <section className="rounded-lg border bg-muted/30 p-3">
+                <h3 className="mb-2 text-xs font-medium text-muted-foreground">
+                  Event
+                </h3>
+                <dl className="space-y-1.5 text-sm">
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-muted-foreground">Date</dt>
+                    <dd>
+                      <Badge variant="secondary" size="sm">
+                        {formatDate(booking.event_date)}
+                      </Badge>
+                    </dd>
+                  </div>
+                  {booking.event_type ? (
+                    <div className="flex justify-between gap-4">
+                      <dt className="text-muted-foreground">Type</dt>
+                      <dd>
+                        <Badge variant="primary-light" size="sm">
+                          {booking.event_type}
+                        </Badge>
+                      </dd>
+                    </div>
+                  ) : null}
+                  {booking.zone ? (
+                    <div className="flex justify-between gap-4">
+                      <dt className="text-muted-foreground">Zone</dt>
+                      <dd>
+                        {booking.zone} ({booking.zone_code})
+                      </dd>
+                    </div>
+                  ) : null}
+                </dl>
+              </section>
+
+              {attendees.length > 0 ? (
+                <section className="rounded-lg border bg-muted/30 p-3">
+                  <h3 className="mb-2 text-xs font-medium text-muted-foreground">
+                    Attendees ({attendees.length})
+                  </h3>
+                  <ul className="space-y-1 text-sm">
+                    {attendees.map((attendee) => (
+                      <li key={attendee.id}>{formatAttendeeName(attendee)}</li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+
+              <section className="rounded-lg border bg-muted/30 p-3">
+                <h3 className="mb-2 text-xs font-medium text-muted-foreground">
+                  Financial
+                </h3>
+                <dl className="space-y-1.5 text-sm">
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Amount</dt>
+                    <dd className="font-medium">{formatCurrency(booking.amount)}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Commission</dt>
+                    <dd>{formatCurrency(booking.commission)}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-muted-foreground">Fees</dt>
+                    <dd>{formatCurrency(booking.fees)}</dd>
+                  </div>
+                  <Separator className="my-1" />
+                  <div className="flex justify-between font-medium">
+                    <dt>Net profit</dt>
+                    <dd>{formatCurrency(booking.commission - booking.fees)}</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="seat">Seat assignment</Label>
+                  <Input
+                    id="seat"
+                    value={seat}
+                    onChange={(e) => setSeat(e.target.value)}
+                    placeholder="e.g. A1, B2, VIP-01"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="pickup">Pickup location</Label>
+                  <Input
+                    id="pickup"
+                    value={pickupLoc}
+                    onChange={(e) => setPickupLoc(e.target.value)}
+                    placeholder="e.g. Hotel Lobby"
+                  />
+                </div>
+                {booking.is_rsh_transfer ? (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="child-count">Children (pickup)</Label>
+                    <Input
+                      id="child-count"
+                      type="number"
+                      min={0}
+                      max={50}
+                      step={1}
+                      value={childCount}
+                      onChange={(e) => {
+                        const n = Number.parseInt(e.target.value, 10)
+                        setChildCount(
+                          Number.isFinite(n) ? Math.max(0, Math.min(50, n)) : 0
+                        )
+                      }}
+                      placeholder="0"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Free on ticket; counted for RSH pickup only. Prefer this
+                      over putting +1C in seat.
+                    </p>
+                  </div>
+                ) : null}
+                <div className="rounded-lg border p-3">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-muted-foreground">
+                      Party export
+                    </span>
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="xs"
+                      onClick={() => void handleCopyParty()}
                     >
-                        <svg
-                            className="w-5 h-5 text-[var(--foreground-secondary)]"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
+                      {copyFeedback || 'Copy'}
+                    </Button>
+                  </div>
+                  <div className="space-y-0.5 font-mono text-xs">
+                    {partyLines.length > 0 ? (
+                      partyLines.map((line, idx) => (
+                        <p
+                          key={idx}
+                          className={
+                            idx === 0 ? 'text-muted-foreground' : 'text-foreground'
+                          }
                         >
-                            <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M6 18L18 6M6 6l12 12"
-                            />
-                        </svg>
-                    </button>
+                          {line || '\u00A0'}
+                        </p>
+                      ))
+                    ) : (
+                      <p className="text-muted-foreground">No attendees to export</p>
+                    )}
+                  </div>
                 </div>
+              </div>
 
-                {/* Customer Info */}
-                <div className="mb-6 p-4 rounded-xl bg-[var(--background)]">
-                    <h3 className="text-sm font-medium text-[var(--foreground-secondary)] mb-3">
-                        Customer Information
-                    </h3>
-                    <div className="space-y-2">
-                        <div className="flex justify-between">
-                            <span className="text-[var(--foreground-muted)]">Name</span>
-                            <span className="font-medium">{booking.firstname} {booking.lastname}</span>
-                        </div>
-                        <div className="flex justify-between">
-                            <span className="text-[var(--foreground-muted)]">Email</span>
-                            <span className="text-[var(--accent)]">{booking.email}</span>
-                        </div>
-                        {booking.phone_e164 && (
-                            <div className="flex justify-between">
-                                <span className="text-[var(--foreground-muted)]">Phone</span>
-                                <span>{booking.phone_e164}</span>
-                            </div>
-                        )}
-                        {booking.country && (
-                            <div className="flex justify-between">
-                                <span className="text-[var(--foreground-muted)]">Country</span>
-                                <span>{booking.country}</span>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* Event Info */}
-                <div className="mb-6 p-4 rounded-xl bg-[var(--background)]">
-                    <h3 className="text-sm font-medium text-[var(--foreground-secondary)] mb-3">
-                        Event Details
-                    </h3>
-                    <div className="space-y-2">
-                        <div className="flex justify-between">
-                            <span className="text-[var(--foreground-muted)]">Date</span>
-                            <span className="badge">{formatDate(booking.event_date)}</span>
-                        </div>
-                        {booking.event_type && (
-                            <div className="flex justify-between">
-                                <span className="text-[var(--foreground-muted)]">Type</span>
-                                <span className="badge badge-primary">{booking.event_type}</span>
-                            </div>
-                        )}
-                        {booking.zone && (
-                            <div className="flex justify-between">
-                                <span className="text-[var(--foreground-muted)]">Zone</span>
-                                <span>{booking.zone} ({booking.zone_code})</span>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* Attendees */}
-                {attendees.length > 0 && (
-                    <div className="mb-6 p-4 rounded-xl bg-[var(--background)]">
-                        <h3 className="text-sm font-medium text-[var(--foreground-secondary)] mb-3">
-                            Attendees ({attendees.length})
-                        </h3>
-                        <div className="space-y-2">
-                            {attendees.map((attendee) => (
-                                <div key={attendee.id} className="flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full bg-[var(--accent)]" />
-                                    <span>
-                                        {attendee.attendee_firstname} {attendee.attendee_lastname}
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {/* Financial Info */}
-                <div className="mb-6 p-4 rounded-xl bg-[var(--background)]">
-                    <h3 className="text-sm font-medium text-[var(--foreground-secondary)] mb-3">
-                        Financial
-                    </h3>
-                    <div className="space-y-2">
-                        <div className="flex justify-between">
-                            <span className="text-[var(--foreground-muted)]">Amount</span>
-                            <span className="font-medium text-[var(--success)]">
-                                {formatCurrency(booking.amount)}
-                            </span>
-                        </div>
-                        <div className="flex justify-between">
-                            <span className="text-[var(--foreground-muted)]">Commission</span>
-                            <span>{formatCurrency(booking.commission)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                            <span className="text-[var(--foreground-muted)]">Fees</span>
-                            <span className="text-[var(--warning)]">
-                                {formatCurrency(booking.fees)}
-                            </span>
-                        </div>
-                        <div className="flex justify-between pt-2 border-t border-[var(--border)]">
-                            <span className="font-medium">Net Profit</span>
-                            <span className="font-bold text-[var(--success)]">
-                                {formatCurrency(booking.commission - booking.fees)}
-                            </span>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Editable Fields */}
-                <div className="mb-6 space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-[var(--foreground-secondary)] mb-2">
-                            Seat Assignment
-                        </label>
-                        <input
-                            type="text"
-                            value={seat}
-                            onChange={(e) => setSeat(e.target.value)}
-                            placeholder="e.g., A1, B2, VIP-01"
-                            className="input"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-[var(--foreground-secondary)] mb-2">
-                            Pickup Location
-                        </label>
-                        <input
-                            type="text"
-                            value={pickupLoc}
-                            onChange={(e) => setPickupLoc(e.target.value)}
-                            placeholder="e.g., Hotel Lobby, Airport Terminal 2"
-                            className="input"
-                        />
-                    </div>
-                </div>
-
-                {/* Error Message */}
-                {error && (
-                    <div className="mb-4 p-3 rounded-lg bg-[var(--error-bg)] text-[var(--error)] text-sm">
-                        {error}
-                    </div>
-                )}
-
-                {/* Actions */}
-                <div className="flex gap-3">
-                    <button onClick={onClose} className="btn btn-secondary flex-1">
-                        Cancel
-                    </button>
-                    <button
-                        onClick={handleSave}
-                        disabled={isSaving}
-                        className="btn btn-primary flex-1"
-                    >
-                        {isSaving ? (
-                            <>
-                                <div className="spinner w-4 h-4" />
-                                Saving...
-                            </>
-                        ) : (
-                            'Save Changes'
-                        )}
-                    </button>
-                </div>
+              {error ? (
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              ) : null}
             </div>
-        </div>
-    )
+
+            <DialogFooter className="flex-col gap-2 sm:flex-col">
+              <div className="flex w-full gap-2">
+                <Button type="button" variant="outline" className="flex-1" onClick={onClose}>
+                  Close
+                </Button>
+                <Button
+                  type="button"
+                  className="flex-1"
+                  onClick={() => void handleSave()}
+                  disabled={isSaving || isTogglingCancel}
+                >
+                  {isSaving ? (
+                    <>
+                      <Spinner />
+                      Saving…
+                    </>
+                  ) : (
+                    'Save changes'
+                  )}
+                </Button>
+              </div>
+              <Button
+                type="button"
+                variant={isCancelled ? 'outline' : 'destructive'}
+                className="w-full"
+                onClick={() => void handleToggleCancelled()}
+                disabled={isSaving || isTogglingCancel}
+              >
+                {isTogglingCancel
+                  ? 'Updating…'
+                  : isCancelled
+                    ? 'Restore booking'
+                    : 'Mark as cancelled'}
+              </Button>
+            </DialogFooter>
+          </>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  )
 }

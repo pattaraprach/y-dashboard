@@ -68,15 +68,53 @@ npm run sync:woo -- --from=2025-12-01 --to=2025-12-31 --event=CADCNX --dry-run
 - Perfect for testing before running the actual sync
 - Use this first to verify the sync will work correctly
 
+### Row Level Security (RLS)
+
+Supabase warns when tables are unrestricted. Enable RLS for all `cad_yip_*` tables by running the SQL file in the Supabase SQL editor (or `psql`):
+
+- File: `scripts/database/enable-rls.sql`
+
+| Role | Access |
+|------|--------|
+| `anon` (publishable key, not logged in) | **Denied** |
+| `authenticated` (dashboard login) | Full CRUD |
+| `service_role` (`SUPABASE_SERVICE_KEY`) | Bypasses RLS (Woo sync) |
+
+After RLS: **stay logged in** for the app. For `npm run sync:woo`, set **`SUPABASE_SERVICE_KEY`** (service role) in `.env.local` so the script is not blocked.
+
+### Refunds (completed + refunded + cancelled)
+
+Apply schema first in the Supabase SQL editor (or `psql`), **in this order**:
+
+1. `scripts/database/add-is-cancelled.sql`
+2. `scripts/database/add-order-created-at.sql`
+3. `scripts/database/add-refunds.sql`
+4. `scripts/database/add-child-count.sql` — RSH pickup children
+5. `scripts/database/enable-rls.sql`
+6. Optional: `scripts/database/restrict-booking-updates.sql` (RPC helpers)
+
+After `add-order-created-at.sql`, re-run a full Woo sync (`--date-field=modified` or historical range)
+so `order_created_at` is backfilled; otherwise historical daily metrics fall back to mutable `created_at`.
+
+Then sync as usual. The script:
+
+- Fetches `status=completed,refunded,cancelled`
+- Loads `/orders/{id}/refunds` when status is refunded/cancelled **or** `order.refunds[]` is non-empty
+- Upserts `cad_yip_refunds` + `cad_yip_refund_items`
+- Sets booking `is_cancelled=true` for **any** refund (partial or full), including `completed` + refund evidence
+- Keeps dashboard cancel via `cancel_source=dashboard` sticky
+
 ### What Gets Synced
 
-The script syncs data to three tables:
+The script syncs data to:
 
 1. **cad_yip_bookings**
    - Order and customer information
    - Pricing, commission, and fees
    - Event details (date, type, zone)
    - Seat and pickup information
+   - Refund flags: `woo_status`, `refund_status`, `amount_refunded`, `amount_net`, `is_cancelled`
+2. **cad_yip_refunds** / **cad_yip_refund_items** — Woo refund ledger
 
 2. **cad_yip_attendees**
    - Attendee names for each booking

@@ -1,0 +1,10 @@
+# Project MCP overrides replace user ~/.grok/config.toml for the same server
+# name entirely (fields are not merged).
+# Set REUI_MCP_TOKEN in the environment (or user-level config) — never commit a PAT.
+[mcp_servers.reui]
+url = "https://mcp.reui.io/api/mcp"
+enabled = true
+startup_timeout_sec = 60
+
+[mcp_servers.reui.headers]
+Authorization = "Bearer ${REUI_MCP_TOKEN}"
