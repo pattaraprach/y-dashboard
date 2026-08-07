@@ -442,7 +442,7 @@ function inferEventDateFromSku(sku: string): string | null {
   const upper = sku.toUpperCase()
 
   // CADNYE{YY}{DD}{zone} — always Dec 31 of the night ringing in brand year YY
-  const nye = upper.match(/^CADNYE(\d{2})(\d{2})[A-Z]/S)?$/i)
+  const nye = upper.match(/^CADNYE(\d{2})(\d{2})([A-Z]|P-S)$/i)
   if (nye) {
     const brandYear = 2000 + parseInt(nye[1], 10)
     const day = parseInt(nye[2], 10)

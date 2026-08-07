@@ -1,19 +1,18 @@
 'use client'
-'use no memo'
 
 import { memo, useEffect, useMemo, useState } from 'react'
 import {
   type ColumnDef,
   type PaginationState,
   type SortingState,
-  getCoreRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  useReactTable,
+  sortFn_datetime,
+  useTable,
 } from '@tanstack/react-table'
 import {
   DataGrid,
   DataGridContainer,
+  dataGridFeatures,
+  type DataGridFeatures,
 } from '@/components/reui/data-grid/data-grid'
 import { DataGridPagination } from '@/components/reui/data-grid/data-grid-pagination'
 import { DataGridTable } from '@/components/reui/data-grid/data-grid-table'
@@ -35,10 +34,6 @@ const TABLE_LAYOUT = {
   columnsResizable: false,
 }
 
-const getCoreModel = getCoreRowModel()
-const getPaginationModel = getPaginationRowModel()
-const getSortedModel = getSortedRowModel()
-
 function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps) {
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -50,18 +45,23 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
   ])
 
   // Filter changes should jump back to page 1 without sorting work on a dead page.
+  // Defer so setState is not synchronous in the effect body (react-hooks/set-state-in-effect).
   useEffect(() => {
-    setPagination((prev) =>
-      prev.pageIndex === 0 ? prev : { ...prev, pageIndex: 0 }
-    )
+    const timer = setTimeout(() => {
+      setPagination((prev) =>
+        prev.pageIndex === 0 ? prev : { ...prev, pageIndex: 0 }
+      )
+    }, 0)
+    return () => clearTimeout(timer)
   }, [bookings])
 
-  const columns = useMemo<ColumnDef<Booking>[]>(
+  const columns = useMemo<ColumnDef<DataGridFeatures, Booking>[]>(
     () => [
       {
         accessorKey: 'woo_id',
         header: 'ID',
-        sortingFn: 'basic',
+        // String name resolves against dataGridFeatures.sortFns (tree-shaken registry).
+        sortFn: 'basic',
         cell: ({ row }) => (
           <span className="font-medium tabular-nums">
             #{row.original.woo_id ?? '—'}
@@ -153,6 +153,7 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
         id: 'status',
         header: 'Status',
         accessorFn: (row) => row,
+        enableSorting: false,
         cell: ({ row }) => {
           const b = row.original
           if (!b.is_cancelled) {
@@ -188,7 +189,8 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
         id: 'order_created_at',
         header: 'Ordered',
         accessorFn: (row) => row.order_created_at || row.created_at,
-        sortingFn: 'datetime',
+        // Direct fn import: not registered on dataGridFeatures, so no full sortFns registry cost.
+        sortFn: sortFn_datetime,
         cell: ({ row }) => (
           <span className="text-muted-foreground">
             {formatDate(row.original.order_created_at || row.original.created_at)}
@@ -200,16 +202,15 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
     []
   )
 
-  const table = useReactTable({
+  const table = useTable({
+    features: dataGridFeatures,
     data: bookings,
     columns,
+    // Stable row identity keeps selection/pinning/memoization correct under v9's new wrappers.
     getRowId: (row) => String(row.id),
     state: { pagination, sorting },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
-    getCoreRowModel: getCoreModel,
-    getPaginationRowModel: getPaginationModel,
-    getSortedRowModel: getSortedModel,
     // Avoid auto-reset thrash when parent rebuilds the filtered array identity.
     autoResetPageIndex: false,
   })

@@ -1,20 +1,18 @@
 'use client'
-'use no memo'
 
 import { useMemo, useState } from 'react'
 import {
   type ColumnDef,
   type ExpandedState,
   type PaginationState,
-  getCoreRowModel,
-  getExpandedRowModel,
-  getPaginationRowModel,
-  useReactTable,
+  useTable,
 } from '@tanstack/react-table'
 import { Badge } from '@/components/reui/badge'
 import {
   DataGrid,
   DataGridContainer,
+  dataGridFeatures,
+  type DataGridFeatures,
 } from '@/components/reui/data-grid/data-grid'
 import { DataGridPagination } from '@/components/reui/data-grid/data-grid-pagination'
 import {
@@ -52,10 +50,6 @@ const TABLE_LAYOUT = {
   cellBorder: false,
   headerBorder: true,
 }
-
-const getCoreModel = getCoreRowModel()
-const getExpandedModel = getExpandedRowModel()
-const getPaginationModel = getPaginationRowModel()
 
 function formatEventDate(dateStr: string) {
   if (!dateStr || dateStr === 'No Event Date') return dateStr || 'No event date'
@@ -116,7 +110,7 @@ export function MonthlySummary({ data, isLoading }: MonthlySummaryProps) {
   })
   const [expanded, setExpanded] = useState<ExpandedState>({})
 
-  const columns = useMemo<ColumnDef<SummaryTreeRow>[]>(
+  const columns = useMemo<ColumnDef<DataGridFeatures, SummaryTreeRow>[]>(
     () => [
       {
         accessorKey: 'label',
@@ -224,7 +218,8 @@ export function MonthlySummary({ data, isLoading }: MonthlySummaryProps) {
     []
   )
 
-  const table = useReactTable({
+  const table = useTable({
+    features: dataGridFeatures,
     data: treeData,
     columns,
     getRowId: (row) => row.id,
@@ -240,9 +235,6 @@ export function MonthlySummary({ data, isLoading }: MonthlySummaryProps) {
     paginateExpandedRows: false,
     onPaginationChange: setPagination,
     onExpandedChange: setExpanded,
-    getCoreRowModel: getCoreModel,
-    getExpandedRowModel: getExpandedModel,
-    getPaginationRowModel: getPaginationModel,
     autoResetPageIndex: false,
   })
 
