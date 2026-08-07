@@ -1,4 +1,4 @@
-import { updateTag } from 'next/cache'
+import { revalidateTag } from 'next/cache'
 import { NextResponse } from 'next/server'
 import { dashboardCacheTag, type EventCode } from '@/lib/build-dashboard-snapshot'
 
@@ -7,6 +7,9 @@ import { dashboardCacheTag, type EventCode } from '@/lib/build-dashboard-snapsho
  * Auth: Authorization: Bearer $DASHBOARD_REVALIDATE_SECRET
  *
  * Body (optional): { "eventCode": "CADCNX" | "CADNYE" | "all" }
+ *
+ * Note: Route Handlers must use `revalidateTag` (not `updateTag`, which is
+ * Server-Action only). `{ expire: 0 }` expires the tag immediately.
  */
 export async function POST(request: Request) {
   const secret = process.env.DASHBOARD_REVALIDATE_SECRET
@@ -43,7 +46,7 @@ export async function POST(request: Request) {
       : [dashboardCacheTag(eventCode)]
 
   for (const tag of tags) {
-    updateTag(tag)
+    revalidateTag(tag, { expire: 0 })
   }
 
   return NextResponse.json({ ok: true, revalidated: tags })

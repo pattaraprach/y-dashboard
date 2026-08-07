@@ -6,6 +6,7 @@ import {
   updateBookingOpsFields,
 } from '@/app/actions/bookings'
 import { supabase } from '@/lib/supabase'
+import { getChildCount } from '@/lib/child-count'
 import {
   buildGroupedExportText,
   formatAttendeeName,
@@ -40,6 +41,9 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
   // Parent remounts via `key={booking.id}` so local state can init from props.
   const [seat, setSeat] = useState(booking?.seat || '')
   const [pickupLoc, setPickupLoc] = useState(booking?.pickup_loc || '')
+  const [childCount, setChildCount] = useState(
+    booking ? getChildCount(booking) : 0
+  )
   const [isCancelled, setIsCancelled] = useState(booking?.is_cancelled ?? false)
   const [isSaving, setIsSaving] = useState(false)
   const [isTogglingCancel, setIsTogglingCancel] = useState(false)
@@ -79,20 +83,25 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
     setIsSaving(true)
     setError(null)
 
-    // Allowlisted server action — never open-ended client column updates.
-    const result = await updateBookingOpsFields({
-      bookingId: booking.id,
-      seat,
-      pickupLoc,
-    })
+    try {
+      // Allowlisted server action — never open-ended client column updates.
+      const result = await updateBookingOpsFields({
+        bookingId: booking.id,
+        seat,
+        pickupLoc,
+        childCount: booking.is_rsh_transfer ? childCount : 0,
+      })
 
-    setIsSaving(false)
-
-    if (!result.ok) {
-      setError(result.error || 'Failed to save changes. Please try again.')
-    } else {
-      onUpdate()
-      onClose()
+      if (!result.ok) {
+        setError(result.error || 'Failed to save changes. Please try again.')
+      } else {
+        onUpdate()
+        onClose()
+      }
+    } catch {
+      setError('Failed to save changes. Please try again.')
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -122,26 +131,31 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
     setIsTogglingCancel(true)
     setError(null)
 
-    const result = await setBookingCancelled({
-      bookingId: booking.id,
-      cancelled: next,
-    })
+    try {
+      const result = await setBookingCancelled({
+        bookingId: booking.id,
+        cancelled: next,
+      })
 
-    setIsTogglingCancel(false)
+      if (!result.ok) {
+        setError(result.error || `Failed to ${next ? 'cancel' : 'restore'} booking.`)
+        return
+      }
 
-    if (!result.ok) {
-      setError(result.error || `Failed to ${next ? 'cancel' : 'restore'} booking.`)
-      return
+      setIsCancelled(result.is_cancelled)
+      onUpdate()
+    } catch {
+      setError(`Failed to ${next ? 'cancel' : 'restore'} booking.`)
+    } finally {
+      setIsTogglingCancel(false)
     }
-
-    setIsCancelled(result.is_cancelled)
-    onUpdate()
   }
 
   function partyTextForBooking() {
     if (!booking) return ''
     const withAttendees: BookingWithAttendees = {
       ...booking,
+      is_cancelled: isCancelled,
       cad_yip_attendees:
         attendees.length > 0
           ? attendees.map((a) => ({
@@ -152,8 +166,13 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
           : booking.cad_yip_attendees,
       seat,
       pickup_loc: pickupLoc,
+      child_count: booking.is_rsh_transfer ? childCount : 0,
     }
-    return buildGroupedExportText([withAttendees], { seat, pickup: pickupLoc })
+    return buildGroupedExportText([withAttendees], {
+      seat,
+      pickup: pickupLoc,
+      childCount: booking.is_rsh_transfer ? childCount : 0,
+    })
   }
 
   async function handleCopyParty() {
@@ -329,6 +348,30 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
                     placeholder="e.g. Hotel Lobby"
                   />
                 </div>
+                {booking.is_rsh_transfer ? (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="child-count">Children (pickup)</Label>
+                    <Input
+                      id="child-count"
+                      type="number"
+                      min={0}
+                      max={50}
+                      step={1}
+                      value={childCount}
+                      onChange={(e) => {
+                        const n = Number.parseInt(e.target.value, 10)
+                        setChildCount(
+                          Number.isFinite(n) ? Math.max(0, Math.min(50, n)) : 0
+                        )
+                      }}
+                      placeholder="0"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Free on ticket; counted for RSH pickup only. Prefer this
+                      over putting +1C in seat.
+                    </p>
+                  </div>
+                ) : null}
                 <div className="rounded-lg border p-3">
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <span className="text-xs font-medium text-muted-foreground">

@@ -4,7 +4,7 @@
       "type": "http",
       "url": "https://mcp.reui.io/api/mcp",
       "headers": {
-        "Authorization": "Bearer reui_pat_1EEDFXqppagMHlj459sUGr7-_sOlFAGxeUBZ_Va2fhM"
+        "Authorization": "Bearer ${REUI_MCP_TOKEN}"
       }
     }
   }

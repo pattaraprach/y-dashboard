@@ -34,6 +34,11 @@ yarn-error.log*
 .env*
 !.env.example
 
+# Local MCP credentials (never commit PATs)
+.cursor/mcp.local.json
+.mcp.local.json
+.grok/config.local.toml
+
 # vercel
 .vercel
 

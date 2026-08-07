@@ -4,6 +4,10 @@ import {
   BOOKING_SELECT,
   eventSkuFilter,
 } from '@/lib/bookings-query'
+import {
+  rshPickupHeadcount,
+  ticketGuestCount,
+} from '@/lib/child-count'
 import { buildHourlyMetrics } from '@/lib/hourly-metrics'
 import { createServiceClient } from '@/lib/supabase-admin'
 import type {
@@ -78,14 +82,16 @@ function buildMetrics(bookings: BookingWithAttendees[]): {
 } {
   const activeBookings = bookings.filter((b) => !b.is_cancelled)
 
-  const attendeesByBooking = new Map<number, number>()
+  // Ticket guests = named attendees only (children free → excluded).
+  // RSH pickup headcount = attendees + child_count (capacity).
+  const ticketGuestsByBooking = new Map<number, number>()
   for (const b of bookings) {
-    attendeesByBooking.set(b.id, b.cad_yip_attendees?.length || 0)
+    ticketGuestsByBooking.set(b.id, ticketGuestCount(b))
   }
 
   const totalOrders = activeBookings.length
   const totalGuests = activeBookings.reduce(
-    (sum, b) => sum + (attendeesByBooking.get(b.id) || 0),
+    (sum, b) => sum + (ticketGuestsByBooking.get(b.id) || 0),
     0
   )
   const totalAmount = activeBookings.reduce((sum, b) => sum + Number(b.amount), 0)
@@ -99,16 +105,13 @@ function buildMetrics(bookings: BookingWithAttendees[]): {
 
   const rshAttendees = activeBookings
     .filter((b) => b.is_rsh_transfer)
-    .reduce((sum, b) => sum + (attendeesByBooking.get(b.id) || 0), 0)
+    .reduce((sum, b) => sum + rshPickupHeadcount(b), 0)
 
   const rshByDayMap = new Map<string, number>()
   for (const b of activeBookings) {
     if (!b.is_rsh_transfer) continue
     const day = b.event_date || 'Unknown'
-    rshByDayMap.set(
-      day,
-      (rshByDayMap.get(day) || 0) + (attendeesByBooking.get(b.id) || 0)
-    )
+    rshByDayMap.set(day, (rshByDayMap.get(day) || 0) + rshPickupHeadcount(b))
   }
   const rshAttendeesByDay = Array.from(rshByDayMap.entries())
     .map(([date, count]) => ({ date, count }))
@@ -139,7 +142,7 @@ function buildMetrics(bookings: BookingWithAttendees[]): {
       commission: 0,
     }
     eventMap.set(eventType, {
-      guests: current.guests + (attendeesByBooking.get(booking.id) || 0),
+      guests: current.guests + (ticketGuestsByBooking.get(booking.id) || 0),
       orders: current.orders + 1,
       amount: current.amount + Number(booking.amount),
       commission: current.commission + Number(booking.commission),
@@ -169,7 +172,7 @@ function buildMetrics(bookings: BookingWithAttendees[]): {
       rshOrders: 0,
       nonRshOrders: 0,
     }
-    const guestCount = attendeesByBooking.get(booking.id) || 0
+    const guestCount = ticketGuestsByBooking.get(booking.id) || 0
     const isRsh = booking.is_rsh_transfer
     dailyMap.set(date, {
       guests: current.guests + guestCount,

@@ -24,6 +24,7 @@ export function buildHourlyMetrics(
   return Array.from({ length: 24 }, (_, i) => {
     const slotStart = nowMs - (24 - i) * 3_600_000
     const slotEnd = nowMs - (23 - i) * 3_600_000
+    // Display label may collide across DST fall-back; key uses slotStart ms.
     const label = new Date(slotStart).toLocaleTimeString('en-GB', {
       hour: '2-digit',
       minute: '2-digit',
@@ -46,6 +47,14 @@ export function buildHourlyMetrics(
       }
     }
 
-    return { label, totalOrders, rshOrders, nonRshOrders, totalGuests }
+    return {
+      label,
+      // Stable React key across DST when display labels collide.
+      slotKey: String(slotStart),
+      totalOrders,
+      rshOrders,
+      nonRshOrders,
+      totalGuests,
+    }
   })
 }

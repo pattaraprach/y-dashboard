@@ -1,5 +1,6 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import { formatChildCountSuffix, getChildCount } from '@/lib/child-count'
 import type {
     BookingExportRow,
     BookingWithAttendees,
@@ -53,13 +54,24 @@ export function formatAttendeeName(attendee: {
 /** One party per booking; attendees share seat/pickup. */
 function buildExportParties(
     bookings: BookingWithAttendees[],
-    options?: { seat?: string | null; pickup?: string | null }
+    options?: {
+        seat?: string | null
+        pickup?: string | null
+        childCount?: number | null
+    }
 ): ExportParty[] {
     const parties: ExportParty[] = []
 
     for (const booking of bookings) {
         const seat = (options?.seat ?? booking.seat)?.trim() || ''
         const pickup = (options?.pickup ?? booking.pickup_loc)?.trim() || ''
+        const childCount =
+            options?.childCount != null
+                ? Math.max(0, Math.floor(options.childCount))
+                : getChildCount({
+                      child_count: booking.child_count,
+                      seat: options?.seat ?? booking.seat,
+                  })
         const names: string[] = []
 
         for (const attendee of booking.cad_yip_attendees ?? []) {
@@ -81,6 +93,7 @@ function buildExportParties(
             eventDate: booking.event_date ?? null,
             isRsh: booking.is_rsh_transfer === true,
             isCancelled: booking.is_cancelled === true,
+            childCount: booking.is_rsh_transfer ? childCount : 0,
             names,
         })
     }
@@ -101,6 +114,7 @@ function expandPartiesToRows(parties: ExportParty[]): BookingExportRow[] {
             eventDate: party.eventDate,
             isRsh: party.isRsh,
             isCancelled: party.isCancelled,
+            childCount: party.childCount,
         }))
     })
 }
@@ -108,13 +122,17 @@ function expandPartiesToRows(parties: ExportParty[]): BookingExportRow[] {
 /**
  * Clipboard text: party header + names, blank line between bookings.
  *
- * #1001 | A12 | Hotel Lobby | Active
+ * #1001 | A12 | Hotel Lobby | Active | +1C
  * Alice Tan
  * Bob Tan
  */
 export function buildGroupedExportText(
     bookings: BookingWithAttendees[],
-    options?: { seat?: string | null; pickup?: string | null }
+    options?: {
+        seat?: string | null
+        pickup?: string | null
+        childCount?: number | null
+    }
 ): string {
     return buildExportParties(bookings, options)
         .map((party) => {
@@ -122,22 +140,43 @@ export function buildGroupedExportText(
             const seat = party.seat || '—'
             const pickup = party.pickup || '—'
             const status = party.isCancelled ? 'Cancelled' : 'Active'
-            return [`${orderLabel} | ${seat} | ${pickup} | ${status}`, ...party.names].join('\n')
+            const child = formatChildCountSuffix(party.childCount)
+            const header = child
+                ? `${orderLabel} | ${seat} | ${pickup} | ${status} | ${child}`
+                : `${orderLabel} | ${seat} | ${pickup} | ${status}`
+            return [header, ...party.names].join('\n')
         })
         .join('\n\n')
 }
 
+/**
+ * CSV cell escape. Neutralize formula injection for Excel/Sheets
+ * (=, +, -, @, tab/CR) by prefixing a single quote before quoting.
+ */
 function csvEscape(value: string): string {
-    if (/[",\n\r]/.test(value)) {
-        return `"${value.replace(/"/g, '""')}"`
+    let cell = value
+    if (/^[=+\-@\t\r]/.test(cell)) {
+        cell = `'${cell}`
     }
-    return value
+    if (/[",\n\r]/.test(cell)) {
+        return `"${cell.replace(/"/g, '""')}"`
+    }
+    return cell
 }
 
-/** Manifest CSV: one row per attendee, grouped by Order ID, with Status. */
+/** Manifest CSV: one row per attendee, grouped by Order ID, with Status + Children (RSH). */
 export function buildBookingExportCsv(bookings: BookingWithAttendees[]): string {
     const rows = expandPartiesToRows(buildExportParties(bookings))
-    const header = ['Order ID', 'Party size', 'Attendee #', 'Name', 'Seat', 'Pickup', 'Status']
+    const header = [
+        'Order ID',
+        'Party size',
+        'Attendee #',
+        'Name',
+        'Seat',
+        'Pickup',
+        'Status',
+        'Children',
+    ]
     const body = rows.map((row) =>
         [
             row.orderId != null ? String(row.orderId) : '',
@@ -147,6 +186,7 @@ export function buildBookingExportCsv(bookings: BookingWithAttendees[]): string 
             row.seat,
             row.pickup,
             row.isCancelled ? 'Cancelled' : 'Active',
+            row.isRsh ? String(row.childCount) : '0',
         ]
             .map(csvEscape)
             .join(',')

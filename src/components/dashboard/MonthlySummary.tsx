@@ -235,7 +235,8 @@ export function MonthlySummary({ data, isLoading }: MonthlySummaryProps) {
     paginateExpandedRows: false,
     onPaginationChange: setPagination,
     onExpandedChange: setExpanded,
-    autoResetPageIndex: false,
+    // Resync can shrink rows; auto-reset avoids an empty invalid page.
+    autoResetPageIndex: true,
   })
 
   return (

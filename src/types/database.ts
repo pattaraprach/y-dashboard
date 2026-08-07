@@ -18,6 +18,8 @@ export type Database = {
                     seat: string | null
                     is_rsh_transfer: boolean
                     pickup_loc: string | null
+                    /** Manual children for RSH pickup capacity (free on ticket). */
+                    child_count: number
                     amount: number
                     commission: number
                     fees: number
@@ -145,6 +147,8 @@ export interface ExportParty {
     eventDate: string | null
     isRsh: boolean
     isCancelled: boolean
+    /** RSH pickup children (0 for non-RSH). */
+    childCount: number
     names: string[]
 }
 
@@ -159,6 +163,7 @@ export interface BookingExportRow {
     eventDate: string | null
     isRsh: boolean
     isCancelled: boolean
+    childCount: number
 }
 
 export interface DashboardMetrics {
@@ -190,7 +195,9 @@ export interface DailyMetrics {
 }
 
 export interface HourlyMetrics {
-    label: string  // "14:00"
+    label: string  // "14:00" (display; may collide on DST fall-back)
+    /** Unique slot id (epoch ms of bucket start) for React keys */
+    slotKey?: string
     totalOrders: number
     rshOrders: number
     nonRshOrders: number

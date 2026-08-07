@@ -17,6 +17,7 @@ function booking(partial: Partial<BookingWithAttendees> & { id: number }): Booki
     seat: null,
     is_rsh_transfer: false,
     pickup_loc: null,
+    child_count: 0,
     amount: 1000,
     commission: 0,
     fees: 0,

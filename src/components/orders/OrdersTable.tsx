@@ -17,6 +17,7 @@ import {
 import { DataGridPagination } from '@/components/reui/data-grid/data-grid-pagination'
 import { DataGridTable } from '@/components/reui/data-grid/data-grid-table'
 import { Badge } from '@/components/reui/badge'
+import { getChildCount } from '@/lib/child-count'
 import { formatCurrency, formatCustomerName, formatDate } from '@/lib/utils'
 import type { Booking } from '@/types/database'
 
@@ -124,17 +125,32 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
       {
         accessorKey: 'seat',
         header: 'Seat',
-        cell: ({ getValue }) => {
+        cell: ({ row, getValue }) => {
           const seat = getValue<string | null>()
-          return seat ? (
-            <Badge variant="success-light" size="sm">
-              {seat}
-            </Badge>
-          ) : (
-            <span className="text-muted-foreground">Not assigned</span>
+          const children = row.original.is_rsh_transfer
+            ? getChildCount(row.original)
+            : 0
+          // If seat already has +NC / +NCHD, don't duplicate a second badge.
+          const showChildBadge =
+            children > 0 && !/\+\s*\d+\s*C(?:HD)?\b/i.test(seat || '')
+          return (
+            <span className="inline-flex flex-wrap items-center gap-1">
+              {seat ? (
+                <Badge variant="success-light" size="sm">
+                  {seat}
+                </Badge>
+              ) : (
+                <span className="text-muted-foreground">Not assigned</span>
+              )}
+              {showChildBadge ? (
+                <Badge variant="warning-light" size="sm">
+                  +{children}C
+                </Badge>
+              ) : null}
+            </span>
           )
         },
-        size: 110,
+        size: 130,
       },
       {
         accessorKey: 'pickup_loc',

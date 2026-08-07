@@ -8,11 +8,12 @@
 -- 2. DROP POLICY "cad_yip_bookings_update_authenticated"
 -- 3. CREATE POLICY update only for service_role, or use SECURITY DEFINER RPCs below.
 
--- Allowlisted seat/pickup update (callable from PostgREST if needed later)
+-- Allowlisted seat/pickup/child_count update (callable from PostgREST if needed later)
 CREATE OR REPLACE FUNCTION public.update_booking_ops_fields(
   p_booking_id bigint,
   p_seat text,
-  p_pickup_loc text
+  p_pickup_loc text,
+  p_child_count integer DEFAULT 0
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -24,10 +25,15 @@ BEGIN
     RAISE EXCEPTION 'Unauthorized';
   END IF;
 
+  IF p_child_count IS NULL OR p_child_count < 0 OR p_child_count > 50 THEN
+    RAISE EXCEPTION 'Invalid child_count';
+  END IF;
+
   UPDATE public.cad_yip_bookings
   SET
     seat = p_seat,
-    pickup_loc = p_pickup_loc
+    pickup_loc = p_pickup_loc,
+    child_count = p_child_count
   WHERE id = p_booking_id;
 
   IF NOT FOUND THEN
@@ -36,8 +42,8 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.update_booking_ops_fields(bigint, text, text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.update_booking_ops_fields(bigint, text, text) TO authenticated;
+REVOKE ALL ON FUNCTION public.update_booking_ops_fields(bigint, text, text, integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.update_booking_ops_fields(bigint, text, text, integer) TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.set_booking_cancelled(
   p_booking_id bigint,
@@ -53,6 +59,10 @@ DECLARE
 BEGIN
   IF auth.uid() IS NULL THEN
     RAISE EXCEPTION 'Unauthorized';
+  END IF;
+
+  IF p_cancelled IS NULL THEN
+    RAISE EXCEPTION 'p_cancelled is required';
   END IF;
 
   SELECT * INTO r FROM public.cad_yip_bookings WHERE id = p_booking_id FOR UPDATE;

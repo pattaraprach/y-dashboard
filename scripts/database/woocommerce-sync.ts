@@ -253,8 +253,13 @@ async function fetchWooCommerceOrders(
 }
 
 function shouldLoadRefundDetails(order: WooOrder): boolean {
+  // Always load for terminal cancel statuses.
   if (order.status === 'refunded' || order.status === 'cancelled') return true
+  // Woo embeds a summary array when present.
   if (Array.isArray(order.refunds) && order.refunds.length > 0) return true
+  // Completed orders may still hold partial refunds; Woo sometimes omits refunds[].
+  // Fetching the refunds endpoint avoids wiping prior refund evidence on re-sync.
+  if (order.status === 'completed') return true
   return false
 }
 
@@ -798,13 +803,40 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
       // Check if booking already exists
       const { data: existingBooking } = await supabase
         .from('cad_yip_bookings')
-        .select('id, cancel_source, is_cancelled, seat, pickup_loc')
+        .select(
+          'id, cancel_source, is_cancelled, seat, pickup_loc, child_count, amount_refunded, amount_net, refund_status, refunded_at, cancelled_at'
+        )
         .eq('woo_id', order.id)
         .eq('sku', lineItem.sku)
         .maybeSingle()
 
       const skuAlloc = refundBySku.get(lineItem.sku)
-      const refundFields = computeBookingRefundFields(itemTotal, skuAlloc, order.status)
+      let refundFields = computeBookingRefundFields(itemTotal, skuAlloc, order.status)
+
+      // If this sync did not load refunds (or Woo returned empty) but DB already has
+      // refund money, keep the stronger evidence instead of clearing it.
+      if (
+        !skuAlloc &&
+        existingBooking &&
+        Number(existingBooking.amount_refunded) > 0
+      ) {
+        refundFields = {
+          ...refundFields,
+          amount_refunded: Number(existingBooking.amount_refunded),
+          amount_net:
+            existingBooking.amount_net != null
+              ? Number(existingBooking.amount_net)
+              : Math.max(0, itemTotal - Number(existingBooking.amount_refunded)),
+          refund_status: (existingBooking.refund_status as
+            | 'none'
+            | 'partial'
+            | 'full') || 'partial',
+          is_cancelled: true,
+          cancel_source: 'woo',
+          cancelled_at: existingBooking.cancelled_at || nowIso,
+          refunded_at: existingBooking.refunded_at || null,
+        }
+      }
 
       // Dashboard cancel is sticky: Woo cannot un-cancel unless it also has refund evidence
       const dashboardSticky =
@@ -829,9 +861,13 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
           ? order.billing.country.trim().toUpperCase()
           : null
 
-      // Preserve ops-edited seat/pickup when Woo meta is empty (dashboard is source of truth).
+      // Preserve ops-edited seat/pickup/child_count (dashboard is source of truth for these).
       const seatToWrite = seat || existingBooking?.seat || ''
       const pickupToWrite = pickupLoc || existingBooking?.pickup_loc || ''
+      const childCountToWrite =
+        typeof existingBooking?.child_count === 'number'
+          ? existingBooking.child_count
+          : 0
 
       const bookingData = {
         woo_id: order.id,
@@ -849,6 +885,8 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
         seat: seatToWrite,
         is_rsh_transfer: isRshTransfer,
         pickup_loc: pickupToWrite,
+        // Never invent children from Woo — free ticket pax, manual for pickup capacity.
+        child_count: childCountToWrite,
         amount: itemTotal,
         commission,
         fees,

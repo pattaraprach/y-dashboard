@@ -12,26 +12,40 @@ async function requireAuthenticatedUser() {
 }
 
 /**
- * Allowlisted seat/pickup update only — never open-ended column updates from the client.
+ * Allowlisted seat/pickup/child_count update only — never open-ended column updates.
+ * child_count is for RSH pickup capacity (children free on ticket).
  */
 export async function updateBookingOpsFields(input: {
   bookingId: number
   seat: string
   pickupLoc: string
+  childCount: number
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     const supabase = await requireAuthenticatedUser()
-    const { error } = await supabase
+
+    const childCount = Math.max(
+      0,
+      Math.min(50, Math.floor(Number(input.childCount) || 0))
+    )
+
+    const { data, error } = await supabase
       .from('cad_yip_bookings')
       .update({
         seat: input.seat,
         pickup_loc: input.pickupLoc,
+        child_count: childCount,
       })
       .eq('id', input.bookingId)
+      .select('id')
+      .maybeSingle()
 
     if (error) {
       console.error('updateBookingOpsFields:', error)
       return { ok: false, error: 'Failed to save changes.' }
+    }
+    if (!data) {
+      return { ok: false, error: 'Booking not found.' }
     }
     return { ok: true }
   } catch {
@@ -41,6 +55,7 @@ export async function updateBookingOpsFields(input: {
 
 /**
  * Allowlisted cancel/restore only. Restore blocked when Woo refund evidence remains.
+ * Re-reads refund_status after update to reduce races with concurrent Woo sync.
  */
 export async function setBookingCancelled(input: {
   bookingId: number
@@ -48,6 +63,10 @@ export async function setBookingCancelled(input: {
 }): Promise<{ ok: true; is_cancelled: boolean } | { ok: false; error: string }> {
   try {
     const supabase = await requireAuthenticatedUser()
+
+    if (typeof input.cancelled !== 'boolean') {
+      return { ok: false, error: 'Invalid cancel flag.' }
+    }
 
     const { data: row, error: readError } = await supabase
       .from('cad_yip_bookings')
@@ -73,7 +92,7 @@ export async function setBookingCancelled(input: {
     const payload = input.cancelled
       ? {
           is_cancelled: true,
-          cancel_source: 'dashboard',
+          cancel_source: 'dashboard' as const,
           cancelled_at: new Date().toISOString(),
         }
       : {
@@ -82,17 +101,42 @@ export async function setBookingCancelled(input: {
           cancelled_at: null,
         }
 
-    const { error } = await supabase
+    const { data: updated, error } = await supabase
       .from('cad_yip_bookings')
       .update(payload)
       .eq('id', input.bookingId)
+      .select('id, is_cancelled, refund_status')
+      .maybeSingle()
 
     if (error) {
       console.error('setBookingCancelled:', error)
       return { ok: false, error: 'Failed to update cancel status.' }
     }
+    if (!updated) {
+      return { ok: false, error: 'Booking not found.' }
+    }
 
-    return { ok: true, is_cancelled: input.cancelled }
+    // Concurrent Woo sync may have written refund evidence between read and write.
+    if (
+      !input.cancelled &&
+      updated.refund_status &&
+      updated.refund_status !== 'none'
+    ) {
+      await supabase
+        .from('cad_yip_bookings')
+        .update({
+          is_cancelled: true,
+          cancel_source: 'woo',
+          cancelled_at: new Date().toISOString(),
+        })
+        .eq('id', input.bookingId)
+      return {
+        ok: false,
+        error: 'This booking still has Woo refund evidence and stays cancelled.',
+      }
+    }
+
+    return { ok: true, is_cancelled: updated.is_cancelled }
   } catch {
     return { ok: false, error: 'Unauthorized' }
   }

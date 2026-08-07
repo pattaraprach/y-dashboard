@@ -222,10 +222,17 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
     [filterBookings]
   )
 
+  // Tick wall clock so rolling 24h buckets advance even when snapshot is static.
+  const [nowMs, setNowMs] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNowMs(Date.now()), 60_000)
+    return () => window.clearInterval(id)
+  }, [])
+
   // Live rolling 24h — never use cached snapshot.hourlyMetrics (freezes under hours TTL).
   const hourlyMetrics = useMemo(
-    () => buildHourlyMetrics(allBookings),
-    [allBookings]
+    () => buildHourlyMetrics(allBookings, nowMs),
+    [allBookings, nowMs]
   )
 
   const totalCount = filteredBookings.length
@@ -377,7 +384,7 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
         <MetricCard
           title="RSH Transfer Attendees"
           value={metrics ? formatNumber(metrics.rshAttendees) : '—'}
-          subtitle="Total attendees via RSH transfer"
+          subtitle="Pickup headcount (adults + children)"
           icon={<RSHIcon />}
           variant="warning"
           breakdown={metrics?.rshAttendeesByDay.map(d => ({

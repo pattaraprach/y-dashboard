@@ -38,8 +38,11 @@ export async function proxy(request: NextRequest) {
   const isLoginPage = pathname === '/auth/login'
   const isAuthApi =
     pathname.startsWith('/auth/logout') || pathname.startsWith('/auth/callback')
+  // Route handlers authenticate themselves (e.g. Bearer secret for Woo revalidate).
+  // Do not force cookie login for /api/* — that would 302 CLI cache-bust calls.
+  const isApiRoute = pathname.startsWith('/api/')
 
-  if (!isAuthenticated && !isLoginPage && !isAuthApi) {
+  if (!isAuthenticated && !isLoginPage && !isAuthApi && !isApiRoute) {
     const url = request.nextUrl.clone()
     url.pathname = '/auth/login'
     return NextResponse.redirect(url)
@@ -55,15 +58,16 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Only gate app navigations — skip static assets, images, and Next internals.
+  // Only gate app navigations — skip static assets, images, Next internals, and APIs.
   matcher: [
     /*
      * Match all request paths except:
+     * - api (route handlers with their own auth)
      * - _next/static (static files)
      * - _next/image (image optimization)
      * - favicon / common public assets
      * - files with extensions (images, fonts, maps, etc.)
      */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|xml|woff2?)$).*)',
+    '/((?!api/|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|xml|woff2?)$).*)',
   ],
 }

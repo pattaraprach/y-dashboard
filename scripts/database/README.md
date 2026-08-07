@@ -86,12 +86,19 @@ After RLS: **stay logged in** for the app. For `npm run sync:woo`, set **`SUPABA
 
 ### Refunds (completed + refunded + cancelled)
 
-Apply schema first (Supabase SQL editor or `psql`):
+Apply schema first (Supabase SQL editor or `psql`), in order:
 
 ```bash
-# 1) scripts/database/add-refunds.sql
-# 2) scripts/database/enable-rls.sql
+# 1) scripts/database/add-is-cancelled.sql
+# 2) scripts/database/add-order-created-at.sql
+# 3) scripts/database/add-refunds.sql
+# 4) scripts/database/add-child-count.sql   # RSH pickup children
+# 5) scripts/database/enable-rls.sql
+# Optional: scripts/database/restrict-booking-updates.sql (RPC helpers)
 ```
+
+After `add-order-created-at.sql`, re-run a full Woo sync (`--date-field=modified` or historical range)
+so `order_created_at` is backfilled; otherwise historical daily metrics fall back to mutable `created_at`.
 
 Then sync as usual. The script:
 

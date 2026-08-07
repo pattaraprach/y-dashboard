@@ -18,6 +18,7 @@ export const BOOKING_SELECT = [
   'seat',
   'is_rsh_transfer',
   'pickup_loc',
+  'child_count',
   'amount',
   'commission',
   'fees',

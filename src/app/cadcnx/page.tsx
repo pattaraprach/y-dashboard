@@ -1,5 +1,11 @@
+import { connection } from 'next/server'
 import Dashboard from '@/components/Dashboard'
 
-export default function CADCNXPage() {
+/**
+ * Opt out of static prerender: dashboard is client+auth and must not evaluate
+ * browser Supabase during `next build` without request-time env.
+ */
+export default async function CADCNXPage() {
+  await connection()
   return <Dashboard eventCode="CADCNX" eventName="Yipeng (CADCNX)" />
 }

@@ -38,7 +38,8 @@ export function MetricCard({
           <CardDescription className="leading-snug">{title}</CardDescription>
           <CardTitle
             className={cn(
-              'text-2xl font-semibold tracking-tight',
+              // CardTitle defaults to text-sm; force metric hierarchy.
+              '!text-2xl font-semibold tracking-tight',
               variantAccent[variant]
             )}
           >
@@ -50,11 +51,11 @@ export function MetricCard({
         </div>
 
         {hasBreakdown ? (
-          <div className="flex shrink-0 items-stretch gap-2 self-center">
+          <div className="flex max-w-[55%] shrink-0 items-stretch gap-2 self-center overflow-x-auto">
             {breakdown!.map((item) => (
               <div
                 key={item.label}
-                className="flex min-w-[4.5rem] flex-col items-center justify-center rounded-lg border bg-muted/40 px-2.5 py-2 text-center"
+                className="flex min-w-[4.5rem] shrink-0 flex-col items-center justify-center rounded-lg border bg-muted/40 px-2.5 py-2 text-center"
               >
                 <span className="text-base font-semibold tabular-nums leading-none">
                   {item.value}

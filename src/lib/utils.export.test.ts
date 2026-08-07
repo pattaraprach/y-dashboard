@@ -24,6 +24,7 @@ function booking(
     seat: partial.seat ?? null,
     is_rsh_transfer: partial.is_rsh_transfer ?? false,
     pickup_loc: partial.pickup_loc ?? null,
+    child_count: partial.child_count ?? 0,
     amount: 1000,
     commission: 0,
     fees: 0,
@@ -69,6 +70,27 @@ describe('party export', () => {
     expect(text).toBe('#1001 | A12 | Hotel Lobby | Active\nAlice Tan\nBob Tan')
   })
 
+  it('appends +NC on RSH party export when children set', () => {
+    const rows = [
+      booking({
+        id: 1,
+        woo_id: 125098,
+        seat: 'A12',
+        pickup_loc: 'Hotel Lobby',
+        is_rsh_transfer: true,
+        child_count: 1,
+        cad_yip_attendees: [
+          { id: 1, attendee_firstname: 'Alice', attendee_lastname: 'Tan' },
+        ],
+      }),
+    ]
+
+    const text = buildGroupedExportText(rows)
+    expect(text).toBe(
+      '#125098 | A12 | Hotel Lobby | Active | +1C\nAlice Tan'
+    )
+  })
+
   it('marks cancelled parties and falls back to purchaser when no attendees', () => {
     const rows = [
       booking({
@@ -111,10 +133,12 @@ describe('party export', () => {
 
     const csv = buildBookingExportCsv(rows)
     const lines = csv.split('\n')
-    expect(lines[0]).toBe('Order ID,Party size,Attendee #,Name,Seat,Pickup,Status')
-    expect(lines[1]).toBe('1001,2,1,Alice Tan,A12,Lobby,Active')
-    expect(lines[2]).toBe('1001,2,2,Bob Tan,A12,Lobby,Active')
-    expect(lines[3]).toBe('2002,1,1,Cara Ng,B1,Dock,Cancelled')
+    expect(lines[0]).toBe(
+      'Order ID,Party size,Attendee #,Name,Seat,Pickup,Status,Children'
+    )
+    expect(lines[1]).toBe('1001,2,1,Alice Tan,A12,Lobby,Active,0')
+    expect(lines[2]).toBe('1001,2,2,Bob Tan,A12,Lobby,Active,0')
+    expect(lines[3]).toBe('2002,1,1,Cara Ng,B1,Dock,Cancelled,0')
   })
 
   it('escapes commas and quotes in names', () => {
