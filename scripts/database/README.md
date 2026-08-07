@@ -70,11 +70,9 @@ npm run sync:woo -- --from=2025-12-01 --to=2025-12-31 --event=CADCNX --dry-run
 
 ### Row Level Security (RLS)
 
-Supabase warns when tables are unrestricted. Enable RLS for all `cad_yip_*` tables:
+Supabase warns when tables are unrestricted. Enable RLS for all `cad_yip_*` tables by running the SQL file in the Supabase SQL editor (or `psql`):
 
-```bash
-# scripts/database/enable-rls.sql
-```
+- File: `scripts/database/enable-rls.sql`
 
 | Role | Access |
 |------|--------|
@@ -86,16 +84,14 @@ After RLS: **stay logged in** for the app. For `npm run sync:woo`, set **`SUPABA
 
 ### Refunds (completed + refunded + cancelled)
 
-Apply schema first (Supabase SQL editor or `psql`), in order:
+Apply schema first in the Supabase SQL editor (or `psql`), **in this order**:
 
-```bash
-# 1) scripts/database/add-is-cancelled.sql
-# 2) scripts/database/add-order-created-at.sql
-# 3) scripts/database/add-refunds.sql
-# 4) scripts/database/add-child-count.sql   # RSH pickup children
-# 5) scripts/database/enable-rls.sql
-# Optional: scripts/database/restrict-booking-updates.sql (RPC helpers)
-```
+1. `scripts/database/add-is-cancelled.sql`
+2. `scripts/database/add-order-created-at.sql`
+3. `scripts/database/add-refunds.sql`
+4. `scripts/database/add-child-count.sql` — RSH pickup children
+5. `scripts/database/enable-rls.sql`
+6. Optional: `scripts/database/restrict-booking-updates.sql` (RPC helpers)
 
 After `add-order-created-at.sql`, re-run a full Woo sync (`--date-field=modified` or historical range)
 so `order_created_at` is backfilled; otherwise historical daily metrics fall back to mutable `created_at`.

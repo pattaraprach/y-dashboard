@@ -52,9 +52,8 @@ export function DailyChart({ data, hourlyData, isLoading }: DailyChartProps) {
 
   const is24h = timeRange === '24h'
   const bars = is24h
-    ? hourlyData.map((h, i) => ({
-        // Prefer stable slotKey so DST fall-back does not collide on label.
-        key:        h.slotKey || `${h.label}-${i}`,
+    ? hourlyData.map((h) => ({
+        key:        h.slotKey,
         xLabel:     h.label,
         total:      h.totalOrders,
         rsh:        h.rshOrders,

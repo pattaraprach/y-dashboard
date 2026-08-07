@@ -11,6 +11,12 @@ async function requireAuthenticatedUser() {
   return supabase
 }
 
+function actionError(err: unknown, fallback: string): string {
+  if (err instanceof Error && err.message === 'Unauthorized') return 'Unauthorized'
+  console.error(fallback, err)
+  return fallback
+}
+
 /**
  * Allowlisted seat/pickup/child_count update only — never open-ended column updates.
  * child_count is for RSH pickup capacity (children free on ticket).
@@ -48,8 +54,8 @@ export async function updateBookingOpsFields(input: {
       return { ok: false, error: 'Booking not found.' }
     }
     return { ok: true }
-  } catch {
-    return { ok: false, error: 'Unauthorized' }
+  } catch (err) {
+    return { ok: false, error: actionError(err, 'Failed to save changes.') }
   }
 }
 
@@ -137,7 +143,10 @@ export async function setBookingCancelled(input: {
     }
 
     return { ok: true, is_cancelled: updated.is_cancelled }
-  } catch {
-    return { ok: false, error: 'Unauthorized' }
+  } catch (err) {
+    return {
+      ok: false,
+      error: actionError(err, 'Failed to update cancel status.'),
+    }
   }
 }

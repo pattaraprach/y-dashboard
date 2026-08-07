@@ -38,6 +38,8 @@ async function revalidateDashboardCache(eventFilter?: string): Promise<void> {
       ? eventFilter.toUpperCase()
       : 'all'
 
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 15_000)
   try {
     const res = await fetch(`${base.replace(/\/$/, '')}/api/revalidate-dashboard`, {
       method: 'POST',
@@ -46,6 +48,7 @@ async function revalidateDashboardCache(eventFilter?: string): Promise<void> {
         authorization: `Bearer ${secret}`,
       },
       body: JSON.stringify({ eventCode }),
+      signal: controller.signal,
     })
     if (!res.ok) {
       const text = await res.text()
@@ -55,6 +58,8 @@ async function revalidateDashboardCache(eventFilter?: string): Promise<void> {
     console.log(`Dashboard cache revalidated (${eventCode})`)
   } catch (err) {
     console.warn('Dashboard revalidate error:', err)
+  } finally {
+    clearTimeout(timeout)
   }
 }
 
@@ -252,15 +257,12 @@ async function fetchWooCommerceOrders(
   return response.json()
 }
 
-function shouldLoadRefundDetails(order: WooOrder): boolean {
-  // Always load for terminal cancel statuses.
-  if (order.status === 'refunded' || order.status === 'cancelled') return true
-  // Woo embeds a summary array when present.
-  if (Array.isArray(order.refunds) && order.refunds.length > 0) return true
-  // Completed orders may still hold partial refunds; Woo sometimes omits refunds[].
-  // Fetching the refunds endpoint avoids wiping prior refund evidence on re-sync.
-  if (order.status === 'completed') return true
-  return false
+/**
+ * We only pull completed/refunded/cancelled orders, and all of those can carry
+ * refund ledger rows (including partial refunds on completed). Always load.
+ */
+function shouldLoadRefundDetails(): boolean {
+  return true
 }
 
 /** Full refund list + line items for an order. */
@@ -431,16 +433,12 @@ async function fetchProductEventDate(productId: number): Promise<string | null> 
 function inferEventDateFromSku(sku: string): string | null {
   const upper = sku.toUpperCase()
 
-  // CADNYE{YY}{DD}{zone} — always Dec 31 of the night ringing in brand year YY
+  // CADNYE{YY}{DD}{zone} — event night is always Dec 31 of the year before brand YY
+  // e.g. CADNYE2731S (countdown 2027) → 2026-12-31
   const nye = upper.match(/^CADNYE(\d{2})(\d{2})([A-Z]|P-S)$/i)
   if (nye) {
     const brandYear = 2000 + parseInt(nye[1], 10)
-    const day = parseInt(nye[2], 10)
-    if (day === 31) {
-      // Countdown 2027 product → 2026-12-31
-      return `${brandYear - 1}-12-31`
-    }
-    return `${brandYear}-12-${String(day).padStart(2, '0')}`
+    return `${brandYear - 1}-12-31`
   }
 
   // CADCNX{YY}{DD}{zone} — current season (YY >= 26) is year-then-day in November
@@ -685,7 +683,7 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
 
     // Refund evidence: status or embedded refunds[]
     let refunds: WooRefundDetail[] = []
-    if (shouldLoadRefundDetails(order)) {
+    if (shouldLoadRefundDetails()) {
       try {
         refunds = await fetchOrderRefunds(order.id)
         console.log(`  Refunds loaded: ${refunds.length}`)
@@ -861,13 +859,28 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
           ? order.billing.country.trim().toUpperCase()
           : null
 
-      // Preserve ops-edited seat/pickup/child_count (dashboard is source of truth for these).
-      const seatToWrite = seat || existingBooking?.seat || ''
-      const pickupToWrite = pickupLoc || existingBooking?.pickup_loc || ''
+      // Dashboard is source of truth once ops set seat/pickup/child_count.
+      // Prefer existing non-empty values so Woo meta cannot overwrite ops edits.
+      const seatToWrite =
+        (existingBooking?.seat && String(existingBooking.seat).trim()) ||
+        seat ||
+        ''
+      const pickupToWrite =
+        (existingBooking?.pickup_loc &&
+          String(existingBooking.pickup_loc).trim()) ||
+        pickupLoc ||
+        ''
       const childCountToWrite =
         typeof existingBooking?.child_count === 'number'
           ? existingBooking.child_count
           : 0
+
+      // Preserve original cancel timestamp (dashboard sticky must not move cancelled_at).
+      const cancelledAtToWrite = is_cancelled
+        ? refundFields.cancelled_at ||
+          existingBooking?.cancelled_at ||
+          nowIso
+        : null
 
       const bookingData = {
         woo_id: order.id,
@@ -901,9 +914,7 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
         woo_status: refundFields.woo_status,
         refund_status: refundFields.refund_status,
         cancel_source,
-        cancelled_at: is_cancelled
-          ? refundFields.cancelled_at || nowIso
-          : null,
+        cancelled_at: cancelledAtToWrite,
         refunded_at: refundFields.refunded_at,
         last_synced_at: nowIso,
       }
@@ -1448,7 +1459,13 @@ const limit = limitStr ? parseInt(limitStr, 10) : undefined
 const dryRun = hasFlag('dry-run')
 const pickupOnly = hasFlag('pickup-only')
 const dateFieldArg = (getArg('date-field') || 'created').toLowerCase()
-const dateField: WooDateField = dateFieldArg === 'modified' ? 'modified' : 'created'
+if (dateFieldArg !== 'created' && dateFieldArg !== 'modified') {
+  console.error(
+    `Invalid --date-field=${dateFieldArg}. Use created (default) or modified.`
+  )
+  process.exit(1)
+}
+const dateField: WooDateField = dateFieldArg
 
 if (!dateFrom || !dateTo) {
   console.error('Usage: npm run sync:woo -- --from=YYYY-MM-DD --to=YYYY-MM-DD [OPTIONS]')

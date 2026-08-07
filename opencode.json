@@ -6,7 +6,7 @@
       "url": "https://mcp.reui.io/api/mcp",
       "enabled": true,
       "headers": {
-        "Authorization": "Bearer ${REUI_MCP_TOKEN}"
+        "Authorization": "Bearer {env:REUI_MCP_TOKEN}"
       }
     }
   }

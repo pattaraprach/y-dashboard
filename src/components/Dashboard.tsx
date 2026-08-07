@@ -153,13 +153,27 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
   useEffect(() => {
     let cancelled = false
     const timer = setTimeout(() => {
-      if (!cancelled) void loadFromCache()
+      void (async () => {
+        setIsLoading(true)
+        setLoadError(null)
+        try {
+          const snapshot = await loadDashboardSnapshot(eventCode)
+          if (cancelled) return
+          applySnapshot(snapshot)
+        } catch (error) {
+          if (cancelled) return
+          console.error('Error loading dashboard snapshot:', error)
+          setLoadError(errorMessage(error, 'Failed to load dashboard data'))
+        } finally {
+          if (!cancelled) setIsLoading(false)
+        }
+      })()
     }, 0)
     return () => {
       cancelled = true
       clearTimeout(timer)
     }
-  }, [loadFromCache])
+  }, [eventCode, applySnapshot])
 
   /**
    * Shared filter for table + export.
@@ -272,6 +286,9 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
       await navigator.clipboard.writeText(text)
     } catch (err) {
       console.error('Copy failed:', err)
+      window.alert(
+        'Could not copy to clipboard. Check browser permissions or use HTTPS.'
+      )
     }
   }
 
@@ -530,7 +547,7 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
         booking={selectedBooking}
         onClose={() => setSelectedBooking(null)}
         onUpdate={() => {
-          void handleResync()
+          void loadFromCache()
         }}
       />
     </div>

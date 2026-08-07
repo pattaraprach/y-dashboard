@@ -18,9 +18,10 @@ CREATE OR REPLACE FUNCTION public.update_booking_ops_fields(
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path TO public
 AS $$
 BEGIN
+  -- Fully schema-qualify tables (search_path locked; avoid pg_temp shadowing).
   IF auth.uid() IS NULL THEN
     RAISE EXCEPTION 'Unauthorized';
   END IF;
@@ -52,11 +53,12 @@ CREATE OR REPLACE FUNCTION public.set_booking_cancelled(
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path TO public
 AS $$
 DECLARE
   r public.cad_yip_bookings%ROWTYPE;
 BEGIN
+  -- Fully schema-qualify tables (search_path locked; avoid pg_temp shadowing).
   IF auth.uid() IS NULL THEN
     RAISE EXCEPTION 'Unauthorized';
   END IF;

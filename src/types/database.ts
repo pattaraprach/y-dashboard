@@ -197,7 +197,7 @@ export interface DailyMetrics {
 export interface HourlyMetrics {
     label: string  // "14:00" (display; may collide on DST fall-back)
     /** Unique slot id (epoch ms of bucket start) for React keys */
-    slotKey?: string
+    slotKey: string
     totalOrders: number
     rshOrders: number
     nonRshOrders: number

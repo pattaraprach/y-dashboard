@@ -3,7 +3,9 @@
  * No I/O, no Supabase.
  */
 
-export type RefundStatus = 'none' | 'partial' | 'full'
+import type { RefundStatus } from '../types/database'
+
+export type { RefundStatus }
 
 export type SkuRefundAlloc = {
   refunded: number
