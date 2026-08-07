@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "ignorePatterns": [
+    "src/components/examples/**",
+    "scripts/database/**"
+  ],
+  "dynamicallyLoaded": [
+    "src/components/reui/**",
+    "src/components/ui/**"
+  ],
+  "ignoreDependencies": [
+    "@typescript/native",
+    "shadcn",
+    "dotenv"
+  ],
+  "rules": {
+    "unused-files": "warn",
+    "unused-exports": "warn",
+    "unused-types": "warn",
+    "unused-deps": "warn"
+  }
+}

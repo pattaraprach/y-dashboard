@@ -18,10 +18,20 @@ function assertEventCode(code: string): EventCode {
   return code
 }
 
+/** Require a signed-in user before any dashboard data path (including service-role cache). */
+async function requireAuthenticatedUser(): Promise<void> {
+  const supabase = await createSupabaseServerClient()
+  const { data, error } = await supabase.auth.getClaims()
+  if (error || !data?.claims?.sub) {
+    throw new Error('Unauthorized')
+  }
+}
+
 /** Load snapshot — shared server cache when service role is set; else live user session. */
 export async function loadDashboardSnapshot(
   eventCode: string
 ): Promise<DashboardSnapshot> {
+  await requireAuthenticatedUser()
   const code = assertEventCode(eventCode)
 
   if (hasServiceRoleKey()) {
@@ -40,6 +50,7 @@ export async function loadDashboardSnapshot(
 export async function resyncDashboardSnapshot(
   eventCode: string
 ): Promise<DashboardSnapshot> {
+  await requireAuthenticatedUser()
   const code = assertEventCode(eventCode)
 
   if (hasServiceRoleKey()) {

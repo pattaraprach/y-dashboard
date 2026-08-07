@@ -20,6 +20,43 @@ import path from 'path'
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local') })
 
 import { createClient } from '@supabase/supabase-js'
+import { computeBookingRefundFields } from '../../src/lib/refund-fields'
+
+/** Bust Next.js dashboard snapshot cache after a successful sync (optional). */
+async function revalidateDashboardCache(eventFilter?: string): Promise<void> {
+  const base = process.env.DASHBOARD_APP_URL || process.env.NEXT_PUBLIC_APP_URL
+  const secret = process.env.DASHBOARD_REVALIDATE_SECRET
+  if (!base || !secret) {
+    console.log(
+      'Skipping dashboard cache revalidate (set DASHBOARD_APP_URL + DASHBOARD_REVALIDATE_SECRET)'
+    )
+    return
+  }
+
+  const eventCode =
+    eventFilter?.toUpperCase() === 'CADCNX' || eventFilter?.toUpperCase() === 'CADNYE'
+      ? eventFilter.toUpperCase()
+      : 'all'
+
+  try {
+    const res = await fetch(`${base.replace(/\/$/, '')}/api/revalidate-dashboard`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${secret}`,
+      },
+      body: JSON.stringify({ eventCode }),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      console.warn(`Dashboard revalidate failed: ${res.status} ${text}`)
+      return
+    }
+    console.log(`Dashboard cache revalidated (${eventCode})`)
+  } catch (err) {
+    console.warn('Dashboard revalidate error:', err)
+  }
+}
 
 // Configuration - Use environment variables
 const WOOCOMMERCE_URL = process.env.WOOCOMMERCE_URL || ''
@@ -29,7 +66,6 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
 const SUPABASE_SERVICE_KEY =
   process.env.SUPABASE_SERVICE_KEY ||
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
   ''
 
 // Initialize Supabase client
@@ -108,8 +144,6 @@ interface WooRefundDetail {
   refunded_payment?: boolean
   line_items?: WooRefundLineItem[]
 }
-
-type RefundStatus = 'none' | 'partial' | 'full'
 
 interface SkuRefundAlloc {
   refunded: number
@@ -259,56 +293,7 @@ function allocateRefundsBySku(refunds: WooRefundDetail[]): Map<string, SkuRefund
   return map
 }
 
-/**
- * Any refund ⇒ cancelled. Partial and full both set is_cancelled.
- * Order status refunded/cancelled without line allocation also cancels.
- */
-function computeBookingRefundFields(
-  lineTotal: number,
-  alloc: SkuRefundAlloc | undefined,
-  order: WooOrder,
-  hasAnyOrderRefund: boolean
-): {
-  amount_refunded: number
-  amount_net: number
-  refund_status: RefundStatus
-  is_cancelled: boolean
-  cancel_source: 'woo' | null
-  cancelled_at: string | null
-  refunded_at: string | null
-  woo_status: string
-} {
-  const amount_refunded = alloc?.refunded ?? 0
-  const amount_net = Math.max(0, lineTotal - amount_refunded)
-  let refund_status: RefundStatus = 'none'
 
-  if (amount_refunded > 0) {
-    // Float-safe: treat as full when refund covers (almost) the whole line
-    refund_status = amount_refunded + 0.009 >= lineTotal ? 'full' : 'partial'
-  } else if (
-    hasAnyOrderRefund ||
-    order.status === 'refunded' ||
-    order.status === 'cancelled'
-  ) {
-    // Order-level refund/cancel without SKU match — still cancel the booking
-    refund_status = 'full'
-  }
-
-  const is_cancelled = refund_status !== 'none'
-  const refunded_at = alloc?.latestAt ?? null
-  const cancelled_at = is_cancelled ? refunded_at || new Date().toISOString() : null
-
-  return {
-    amount_refunded: refund_status === 'full' && amount_refunded === 0 ? lineTotal : amount_refunded,
-    amount_net: is_cancelled && amount_refunded === 0 ? 0 : amount_net,
-    refund_status,
-    is_cancelled,
-    cancel_source: is_cancelled ? 'woo' : null,
-    cancelled_at,
-    refunded_at,
-    woo_status: order.status,
-  }
-}
 
 /**
  * Extract metadata value from WooCommerce meta_data array
@@ -707,11 +692,6 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
     }
 
     const refundBySku = allocateRefundsBySku(refunds)
-    const hasAnyOrderRefund =
-      refunds.length > 0 ||
-      (Array.isArray(order.refunds) && order.refunds.length > 0) ||
-      order.status === 'refunded' ||
-      order.status === 'cancelled'
 
     const bookingIdBySku = new Map<string, number>()
     const nowIso = new Date().toISOString()
@@ -818,18 +798,13 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
       // Check if booking already exists
       const { data: existingBooking } = await supabase
         .from('cad_yip_bookings')
-        .select('id, cancel_source, is_cancelled')
+        .select('id, cancel_source, is_cancelled, seat, pickup_loc')
         .eq('woo_id', order.id)
         .eq('sku', lineItem.sku)
         .maybeSingle()
 
       const skuAlloc = refundBySku.get(lineItem.sku)
-      const refundFields = computeBookingRefundFields(
-        itemTotal,
-        skuAlloc,
-        order,
-        hasAnyOrderRefund
-      )
+      const refundFields = computeBookingRefundFields(itemTotal, skuAlloc, order.status)
 
       // Dashboard cancel is sticky: Woo cannot un-cancel unless it also has refund evidence
       const dashboardSticky =
@@ -854,6 +829,10 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
           ? order.billing.country.trim().toUpperCase()
           : null
 
+      // Preserve ops-edited seat/pickup when Woo meta is empty (dashboard is source of truth).
+      const seatToWrite = seat || existingBooking?.seat || ''
+      const pickupToWrite = pickupLoc || existingBooking?.pickup_loc || ''
+
       const bookingData = {
         woo_id: order.id,
         // Real Woo order time — dashboard monthly/daily use this (not Supabase created_at)
@@ -867,9 +846,9 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
         phone_e164: phone.e164,
         country: countryCode,
         sku: lineItem.sku,
-        seat,
+        seat: seatToWrite,
         is_rsh_transfer: isRshTransfer,
-        pickup_loc: pickupLoc,
+        pickup_loc: pickupToWrite,
         amount: itemTotal,
         commission,
         fees,
@@ -1202,6 +1181,10 @@ async function syncWooCommerce(
       console.log('Error Details:')
       stats.errors.forEach(error => console.log(`  - ${error}`))
     }
+
+    if (!dryRun) {
+      await revalidateDashboardCache(eventFilter)
+    }
   } catch (error) {
     console.error('Sync failed:', error)
     throw error
@@ -1402,6 +1385,10 @@ async function syncPickupOnly(
     console.log(`Errors: ${stats.errors.length}`)
     console.log('Error Details:')
     stats.errors.forEach(e => console.log(`  - ${e}`))
+  }
+
+  if (!dryRun && stats.bookingsUpdated > 0) {
+    await revalidateDashboardCache(eventFilter)
   }
 }
 

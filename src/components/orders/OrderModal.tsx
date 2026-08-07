@@ -1,6 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import {
+  setBookingCancelled,
+  updateBookingOpsFields,
+} from '@/app/actions/bookings'
 import { supabase } from '@/lib/supabase'
 import {
   buildGroupedExportText,
@@ -75,16 +79,17 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
     setIsSaving(true)
     setError(null)
 
-    const { error: saveError } = await supabase
-      .from('cad_yip_bookings')
-      .update({ seat, pickup_loc: pickupLoc } as Record<string, unknown>)
-      .eq('id', booking.id)
+    // Allowlisted server action — never open-ended client column updates.
+    const result = await updateBookingOpsFields({
+      bookingId: booking.id,
+      seat,
+      pickupLoc,
+    })
 
     setIsSaving(false)
 
-    if (saveError) {
-      setError('Failed to save changes. Please try again.')
-      console.error('Error updating booking:', saveError)
+    if (!result.ok) {
+      setError(result.error || 'Failed to save changes. Please try again.')
     } else {
       onUpdate()
       onClose()
@@ -95,6 +100,15 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
     if (!booking) return
 
     const next = !isCancelled
+    const hasWooRefund =
+      Boolean(booking.refund_status) && booking.refund_status !== 'none'
+
+    // Block restore when Woo refund evidence remains — no DB write, no resync.
+    if (!next && hasWooRefund) {
+      setError('This booking still has Woo refund evidence and stays cancelled.')
+      return
+    }
+
     if (
       !window.confirm(
         next
@@ -108,45 +122,19 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
     setIsTogglingCancel(true)
     setError(null)
 
-    const { error: toggleError } = await supabase
-      .from('cad_yip_bookings')
-      .update(
-        (next
-          ? {
-              is_cancelled: true,
-              cancel_source: 'dashboard',
-              cancelled_at: new Date().toISOString(),
-            }
-          : booking.refund_status && booking.refund_status !== 'none'
-            ? {
-                // Cannot restore while Woo refund evidence remains
-                is_cancelled: true,
-                cancel_source: 'woo',
-              }
-            : {
-                is_cancelled: false,
-                cancel_source: null,
-                cancelled_at: null,
-              }) as Record<string, unknown>
-      )
-      .eq('id', booking.id)
+    const result = await setBookingCancelled({
+      bookingId: booking.id,
+      cancelled: next,
+    })
 
     setIsTogglingCancel(false)
 
-    if (toggleError) {
-      setError(`Failed to ${next ? 'cancel' : 'restore'} booking. Please try again.`)
-      console.error('Error toggling cancel:', toggleError)
+    if (!result.ok) {
+      setError(result.error || `Failed to ${next ? 'cancel' : 'restore'} booking.`)
       return
     }
 
-    if (next) {
-      setIsCancelled(true)
-    } else if (booking.refund_status && booking.refund_status !== 'none') {
-      setIsCancelled(true)
-      setError('This booking still has Woo refund evidence and stays cancelled.')
-    } else {
-      setIsCancelled(false)
-    }
+    setIsCancelled(result.is_cancelled)
     onUpdate()
   }
 

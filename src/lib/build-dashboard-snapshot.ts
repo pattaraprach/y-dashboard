@@ -4,6 +4,7 @@ import {
   BOOKING_SELECT,
   eventSkuFilter,
 } from '@/lib/bookings-query'
+import { buildHourlyMetrics } from '@/lib/hourly-metrics'
 import { createServiceClient } from '@/lib/supabase-admin'
 import type {
   BookingWithAttendees,
@@ -187,38 +188,9 @@ function buildMetrics(bookings: BookingWithAttendees[]): {
     })
   )
 
-  const nowTs = Date.now()
-  const hourlyMetrics: HourlyMetrics[] = Array.from({ length: 24 }, (_, i) => {
-    const slotStart = nowTs - (24 - i) * 3_600_000
-    const slotEnd = nowTs - (23 - i) * 3_600_000
-    const label = new Date(slotStart).toLocaleTimeString('en-GB', {
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-
-    let totalOrdersH = 0
-    let rshOrders = 0
-    let nonRshOrders = 0
-    let totalGuestsH = 0
-    for (const b of activeBookings) {
-      const soldAt = salesTimestamp(b)
-      if (!soldAt) continue
-      const ts = new Date(soldAt).getTime()
-      if (ts >= slotStart && ts < slotEnd) {
-        totalOrdersH++
-        if (b.is_rsh_transfer) rshOrders++
-        else nonRshOrders++
-        totalGuestsH += attendeesByBooking.get(b.id) || 0
-      }
-    }
-    return {
-      label,
-      totalOrders: totalOrdersH,
-      rshOrders,
-      nonRshOrders,
-      totalGuests: totalGuestsH,
-    }
-  })
+  // Snapshot still includes a point-in-time hourly series for API completeness;
+  // Dashboard recomputes live via buildHourlyMetrics so 24h chart does not freeze.
+  const hourlyMetrics: HourlyMetrics[] = buildHourlyMetrics(bookings)
 
   const monthlyMap = new Map<
     string,

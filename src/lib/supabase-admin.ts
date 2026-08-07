@@ -1,3 +1,4 @@
+import 'server-only'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 /** True when service role is configured for shared server cache. */

@@ -9,6 +9,8 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "sync:woo": "ts-node scripts/database/woocommerce-sync.ts",
     "sync:woo:pickup": "ts-node scripts/database/woocommerce-sync.ts --pickup-only",
     "delete:cadnye2631": "ts-node scripts/database/delete-cadnye2631.ts"
@@ -45,6 +47,7 @@
     "eslint-config-next": "16.3.0",
     "tailwindcss": "^4.3.3",
     "ts-node": "^10.9.2",
-    "typescript": "npm:@typescript/typescript6@^6.0.2"
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "vitest": "^4.1.10"
   }
 }

@@ -6,9 +6,11 @@ import {
   resyncDashboardSnapshot,
 } from '@/app/actions/dashboard'
 import type { DashboardSnapshot } from '@/lib/build-dashboard-snapshot'
+import { buildHourlyMetrics } from '@/lib/hourly-metrics'
 import {
   buildBookingExportCsv,
   buildGroupedExportText,
+  cn,
   downloadCsv,
   formatCurrency,
   formatNumber,
@@ -23,13 +25,11 @@ import { OrderModal } from '@/components/orders/OrderModal'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
-import { cn } from '@/lib/utils'
 import type {
   BookingWithAttendees,
   DashboardMetrics,
   EventMetrics,
   DailyMetrics,
-  HourlyMetrics,
   MonthlySummary as MonthlySummaryType,
 } from '@/types/database'
 import { RefreshCwIcon, SearchIcon, XIcon } from 'lucide-react'
@@ -95,7 +95,6 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
   const [eventMetrics, setEventMetrics] = useState<EventMetrics[]>([])
   const [dailyMetrics, setDailyMetrics] = useState<DailyMetrics[]>([])
-  const [hourlyMetrics, setHourlyMetrics] = useState<HourlyMetrics[]>([])
   const [monthlySummary, setMonthlySummary] = useState<MonthlySummaryType[]>([])
   const [allBookings, setAllBookings] = useState<BookingWithAttendees[]>([])
   const [selectedBooking, setSelectedBooking] = useState<BookingWithAttendees | null>(null)
@@ -116,24 +115,23 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
     setMetrics(snapshot.metrics)
     setEventMetrics(snapshot.eventMetrics)
     setDailyMetrics(snapshot.dailyMetrics)
-    setHourlyMetrics(snapshot.hourlyMetrics)
     setMonthlySummary(snapshot.monthlySummary)
     setAvailableEventDates(snapshot.availableEventDates)
     setGeneratedAt(snapshot.generatedAt)
     setLoadError(null)
   }, [])
 
+  const errorMessage = (error: unknown, fallback: string) =>
+    error instanceof Error ? error.message : fallback
+
   const loadFromCache = useCallback(async () => {
     setIsLoading(true)
     setLoadError(null)
     try {
-      const snapshot = await loadDashboardSnapshot(eventCode)
-      applySnapshot(snapshot)
+      applySnapshot(await loadDashboardSnapshot(eventCode))
     } catch (error) {
       console.error('Error loading dashboard snapshot:', error)
-      setLoadError(
-        error instanceof Error ? error.message : 'Failed to load dashboard data'
-      )
+      setLoadError(errorMessage(error, 'Failed to load dashboard data'))
     } finally {
       setIsLoading(false)
     }
@@ -143,13 +141,10 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
     setIsResyncing(true)
     setLoadError(null)
     try {
-      const snapshot = await resyncDashboardSnapshot(eventCode)
-      applySnapshot(snapshot)
+      applySnapshot(await resyncDashboardSnapshot(eventCode))
     } catch (error) {
       console.error('Error resyncing dashboard:', error)
-      setLoadError(
-        error instanceof Error ? error.message : 'Failed to resync dashboard'
-      )
+      setLoadError(errorMessage(error, 'Failed to resync dashboard'))
     } finally {
       setIsResyncing(false)
     }
@@ -227,23 +222,13 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
     [filterBookings]
   )
 
+  // Live rolling 24h — never use cached snapshot.hourlyMetrics (freezes under hours TTL).
+  const hourlyMetrics = useMemo(
+    () => buildHourlyMetrics(allBookings),
+    [allBookings]
+  )
+
   const totalCount = filteredBookings.length
-
-  const handleSearchChange = (value: string) => {
-    setSearchTerm(value)
-  }
-
-  const handleRshFilterChange = (filter: RshFilter) => {
-    setRshFilter(filter)
-  }
-
-  const handleStatusFilterChange = (filter: StatusFilter) => {
-    setStatusFilter(filter)
-  }
-
-  const handleEventDateFilterChange = (value: string) => {
-    setEventDateFilter(value)
-  }
 
   const clearFilters = () => {
     setSearchTerm('')
@@ -252,11 +237,14 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
     setEventDateFilter('')
   }
 
+  const exportStamp = () => new Date().toISOString().slice(0, 10)
+
   const handleExport = () => {
     if (filteredBookings.length === 0) return
-    const csv = buildBookingExportCsv(filteredBookings)
-    const dateStamp = new Date().toISOString().slice(0, 10)
-    downloadCsv(`${eventCode.toLowerCase()}-bookings-${dateStamp}.csv`, csv)
+    downloadCsv(
+      `${eventCode.toLowerCase()}-bookings-${exportStamp()}.csv`,
+      buildBookingExportCsv(filteredBookings)
+    )
   }
 
   const handleExportRsh = () => {
@@ -264,9 +252,10 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
       window.alert('No RSH transfer bookings match the current filters (status / date / search).')
       return
     }
-    const csv = buildBookingExportCsv(rshExportBookings)
-    const dateStamp = new Date().toISOString().slice(0, 10)
-    downloadCsv(`${eventCode.toLowerCase()}-rsh-${dateStamp}.csv`, csv)
+    downloadCsv(
+      `${eventCode.toLowerCase()}-rsh-${exportStamp()}.csv`,
+      buildBookingExportCsv(rshExportBookings)
+    )
   }
 
   const handleCopyGrouped = async () => {
@@ -424,7 +413,7 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
                 <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={searchTerm}
-                  onChange={(e) => handleSearchChange(e.target.value)}
+                  onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder="Search ID, name, email, seat, pickup…"
                   className="pl-8"
                 />
@@ -472,7 +461,7 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
                 <FilterButton
                   key={value}
                   active={statusFilter === value}
-                  onClick={() => handleStatusFilterChange(value)}
+                  onClick={() => setStatusFilter(value)}
                 >
                   {label}
                 </FilterButton>
@@ -490,7 +479,7 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
                 <FilterButton
                   key={value}
                   active={rshFilter === value}
-                  onClick={() => handleRshFilterChange(value)}
+                  onClick={() => setRshFilter(value)}
                 >
                   {label}
                 </FilterButton>
@@ -501,7 +490,7 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
               <span className="text-sm text-muted-foreground">Event date</span>
               <select
                 value={eventDateFilter}
-                onChange={(e) => handleEventDateFilterChange(e.target.value)}
+                onChange={(e) => setEventDateFilter(e.target.value)}
                 className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
               >
                 <option value="">All dates</option>

@@ -50,11 +50,8 @@ export function formatAttendeeName(attendee: {
         .trim()
 }
 
-/**
- * Build one party per booking. Attendees share seat/pickup.
- * No attendees → purchaser name as a single-person party.
- */
-export function buildExportParties(
+/** One party per booking; attendees share seat/pickup. */
+function buildExportParties(
     bookings: BookingWithAttendees[],
     options?: { seat?: string | null; pickup?: string | null }
 ): ExportParty[] {
@@ -63,14 +60,11 @@ export function buildExportParties(
     for (const booking of bookings) {
         const seat = (options?.seat ?? booking.seat)?.trim() || ''
         const pickup = (options?.pickup ?? booking.pickup_loc)?.trim() || ''
-        const attendees = booking.cad_yip_attendees ?? []
         const names: string[] = []
 
-        if (attendees.length > 0) {
-            for (const attendee of attendees) {
-                const name = formatAttendeeName(attendee)
-                if (name) names.push(name)
-            }
+        for (const attendee of booking.cad_yip_attendees ?? []) {
+            const name = formatAttendeeName(attendee)
+            if (name) names.push(name)
         }
 
         if (names.length === 0) {
@@ -94,36 +88,21 @@ export function buildExportParties(
     return parties
 }
 
-/** Flatten parties to one CSV row per person, with party grouping fields */
-export function expandPartiesToRows(parties: ExportParty[]): BookingExportRow[] {
-    const rows: BookingExportRow[] = []
-    for (const party of parties) {
+function expandPartiesToRows(parties: ExportParty[]): BookingExportRow[] {
+    return parties.flatMap((party) => {
         const partySize = party.names.length
-        party.names.forEach((name, index) => {
-            rows.push({
-                orderId: party.orderId,
-                partySize,
-                attendeeIndex: index + 1,
-                name,
-                seat: party.seat,
-                pickup: party.pickup,
-                eventDate: party.eventDate,
-                isRsh: party.isRsh,
-                isCancelled: party.isCancelled,
-            })
-        })
-    }
-    return rows
-}
-
-/**
- * Expand bookings into one export row per attendee (grouped metadata included).
- */
-export function expandBookingsForExport(
-    bookings: BookingWithAttendees[],
-    options?: { seat?: string | null; pickup?: string | null }
-): BookingExportRow[] {
-    return expandPartiesToRows(buildExportParties(bookings, options))
+        return party.names.map((name, index) => ({
+            orderId: party.orderId,
+            partySize,
+            attendeeIndex: index + 1,
+            name,
+            seat: party.seat,
+            pickup: party.pickup,
+            eventDate: party.eventDate,
+            isRsh: party.isRsh,
+            isCancelled: party.isCancelled,
+        }))
+    })
 }
 
 /**
@@ -132,30 +111,20 @@ export function expandBookingsForExport(
  * #1001 | A12 | Hotel Lobby | Active
  * Alice Tan
  * Bob Tan
- *
- * #1002 | B1 | Airport | Cancelled
- * Cara Lee
  */
 export function buildGroupedExportText(
     bookings: BookingWithAttendees[],
     options?: { seat?: string | null; pickup?: string | null }
 ): string {
-    const parties = buildExportParties(bookings, options)
-    return parties
+    return buildExportParties(bookings, options)
         .map((party) => {
             const orderLabel = party.orderId != null ? `#${party.orderId}` : '#—'
             const seat = party.seat || '—'
             const pickup = party.pickup || '—'
             const status = party.isCancelled ? 'Cancelled' : 'Active'
-            const header = `${orderLabel} | ${seat} | ${pickup} | ${status}`
-            return [header, ...party.names].join('\n')
+            return [`${orderLabel} | ${seat} | ${pickup} | ${status}`, ...party.names].join('\n')
         })
         .join('\n\n')
-}
-
-/** Alias used by Dashboard / modal */
-export function buildJoinedExportText(bookings: BookingWithAttendees[]): string {
-    return buildGroupedExportText(bookings)
 }
 
 function csvEscape(value: string): string {
@@ -165,12 +134,9 @@ function csvEscape(value: string): string {
     return value
 }
 
-/**
- * Manifest CSV: one row per attendee, grouped by Order ID.
- * Status is always written so cancelled rows are obvious when included.
- */
+/** Manifest CSV: one row per attendee, grouped by Order ID, with Status. */
 export function buildBookingExportCsv(bookings: BookingWithAttendees[]): string {
-    const rows = expandBookingsForExport(bookings)
+    const rows = expandPartiesToRows(buildExportParties(bookings))
     const header = ['Order ID', 'Party size', 'Attendee #', 'Name', 'Seat', 'Pickup', 'Status']
     const body = rows.map((row) =>
         [
