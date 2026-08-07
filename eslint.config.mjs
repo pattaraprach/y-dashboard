@@ -14,6 +14,9 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // CommonJS install helpers (Node require API)
     "scripts/**/*.cjs",
+    // Vendor registry output (ReUI / example demos)
+    "src/components/reui/**",
+    "src/components/examples/**",
   ]),
 ]);
 

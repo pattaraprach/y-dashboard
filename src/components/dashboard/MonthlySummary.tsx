@@ -1,198 +1,294 @@
 'use client'
+'use no memo'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import {
+  type ColumnDef,
+  type ExpandedState,
+  type PaginationState,
+  getCoreRowModel,
+  getExpandedRowModel,
+  getPaginationRowModel,
+  useReactTable,
+} from '@tanstack/react-table'
+import { Badge } from '@/components/reui/badge'
+import {
+  DataGrid,
+  DataGridContainer,
+} from '@/components/reui/data-grid/data-grid'
+import { DataGridPagination } from '@/components/reui/data-grid/data-grid-pagination'
+import {
+  DataGridTable,
+  DataGridTableRowExpand,
+} from '@/components/reui/data-grid/data-grid-table'
+import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { formatCurrency, formatNumber } from '@/lib/utils'
-import type { MonthlySummary } from '@/types/database'
+import type { MonthlySummary as MonthlySummaryData } from '@/types/database'
 
 interface MonthlySummaryProps {
-  data: MonthlySummary[]
+  data: MonthlySummaryData[]
   isLoading: boolean
 }
 
-const ChevronIcon = ({ isOpen }: { isOpen: boolean }) => (
-  <svg
-    className={`w-5 h-5 transition-transform ${isOpen ? 'rotate-90' : ''}`}
-    fill="none"
-    stroke="currentColor"
-    viewBox="0 0 24 24"
-  >
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-  </svg>
-)
+type RowKind = 'month' | 'event' | 'ticket'
+
+interface SummaryTreeRow {
+  id: string
+  kind: RowKind
+  label: string
+  sku?: string
+  orders: number
+  amount: number
+  commission: number
+  children?: SummaryTreeRow[]
+}
+
+/** Fixed layout keeps <colgroup> widths so header + body stay aligned. */
+const TABLE_LAYOUT = {
+  dense: true,
+  headerSticky: false,
+  width: 'fixed' as const,
+  columnsResizable: false,
+  cellBorder: false,
+  headerBorder: true,
+}
+
+const getCoreModel = getCoreRowModel()
+const getExpandedModel = getExpandedRowModel()
+const getPaginationModel = getPaginationRowModel()
+
+function formatEventDate(dateStr: string) {
+  if (!dateStr || dateStr === 'No Event Date') return dateStr || 'No event date'
+  const date = new Date(dateStr)
+  if (Number.isNaN(date.getTime())) return dateStr
+  return date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+function toTreeRows(months: MonthlySummaryData[]): SummaryTreeRow[] {
+  return months.map((month) => ({
+    id: `month:${month.month}`,
+    kind: 'month' as const,
+    label: month.monthDisplay,
+    orders: month.totalOrders,
+    amount: month.totalAmount,
+    commission: month.totalCommission,
+    children: month.eventDays.map((day) => ({
+      id: `event:${month.month}:${day.eventDate}`,
+      kind: 'event' as const,
+      label: formatEventDate(day.eventDate),
+      orders: day.totalOrders,
+      amount: day.totalAmount,
+      commission: day.totalCommission,
+      children: day.ticketTypes.map((ticket, idx) => ({
+        id: `ticket:${month.month}:${day.eventDate}:${ticket.sku}:${ticket.eventType}:${idx}`,
+        kind: 'ticket' as const,
+        label: ticket.eventType || 'Unknown',
+        sku: ticket.sku || 'N/A',
+        orders: ticket.quantity,
+        amount: ticket.totalAmount,
+        commission: ticket.totalCommission,
+      })),
+    })),
+  }))
+}
+
+function kindBadge(kind: RowKind) {
+  if (kind === 'month') {
+    return <Badge variant="primary-light" size="sm">Month</Badge>
+  }
+  if (kind === 'event') {
+    return <Badge variant="info-light" size="sm">Event day</Badge>
+  }
+  return <Badge variant="secondary" size="sm">Ticket</Badge>
+}
 
 export function MonthlySummary({ data, isLoading }: MonthlySummaryProps) {
-  const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set())
-  const [expandedEventDays, setExpandedEventDays] = useState<Set<string>>(new Set())
+  const treeData = useMemo(() => toTreeRows(data), [data])
 
-  const toggleMonth = (month: string) => {
-    const newExpanded = new Set(expandedMonths)
-    if (newExpanded.has(month)) {
-      newExpanded.delete(month)
-    } else {
-      newExpanded.add(month)
-    }
-    setExpandedMonths(newExpanded)
-  }
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 8,
+  })
+  const [expanded, setExpanded] = useState<ExpandedState>({})
 
-  const toggleEventDay = (key: string) => {
-    const newExpanded = new Set(expandedEventDays)
-    if (newExpanded.has(key)) {
-      newExpanded.delete(key)
-    } else {
-      newExpanded.add(key)
-    }
-    setExpandedEventDays(newExpanded)
-  }
-
-  const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr)
-    return date.toLocaleDateString('en-US', {
-      weekday: 'short',
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    })
-  }
-
-  if (isLoading) {
-    return (
-      <div className="card">
-        <div className="card-header">
-          <h3 className="card-title">Monthly Summary</h3>
-        </div>
-        <div className="p-8 text-center text-[var(--foreground-secondary)]">
-          Loading monthly summary...
-        </div>
-      </div>
-    )
-  }
-
-  if (data.length === 0) {
-    return (
-      <div className="card">
-        <div className="card-header">
-          <h3 className="card-title">Monthly Summary</h3>
-        </div>
-        <div className="p-8 text-center text-[var(--foreground-secondary)]">
-          No data available
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="card">
-      <div className="card-header">
-        <h3 className="card-title">Monthly Summary</h3>
-        <p className="text-sm text-[var(--foreground-secondary)] mt-1">
-          Ticket type breakdown by event day
-        </p>
-      </div>
-      <div className="divide-y divide-[var(--border)]">
-        {data.map((monthData) => {
-          const isMonthExpanded = expandedMonths.has(monthData.month)
-
+  const columns = useMemo<ColumnDef<SummaryTreeRow>[]>(
+    () => [
+      {
+        accessorKey: 'label',
+        id: 'label',
+        header: () => <span className="font-medium">Breakdown</span>,
+        cell: ({ row }) => {
+          const item = row.original
           return (
-            <div key={monthData.month}>
-              {/* Month Header */}
-              <button
-                onClick={() => toggleMonth(monthData.month)}
-                className="w-full px-6 py-4 flex items-center justify-between hover:bg-[var(--background-secondary)] transition-colors"
-              >
-                <div className="flex items-center gap-3">
-                  <ChevronIcon isOpen={isMonthExpanded} />
-                  <div className="text-left">
-                    <h4 className="font-semibold text-[var(--foreground)]">
-                      {monthData.monthDisplay}
-                    </h4>
-                    <p className="text-sm text-[var(--foreground-secondary)]">
-                      {formatNumber(monthData.totalOrders)} orders · {formatCurrency(monthData.totalAmount)}
-                    </p>
+            <div className="flex min-w-0 items-center gap-1">
+              <DataGridTableRowExpand row={row} className="-ms-1.5 -me-1 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div
+                  className={
+                    item.kind === 'month'
+                      ? 'truncate font-semibold text-foreground'
+                      : item.kind === 'event'
+                        ? 'truncate font-medium text-foreground'
+                        : 'truncate text-foreground'
+                  }
+                >
+                  {item.label}
+                </div>
+                {item.kind === 'ticket' && item.sku ? (
+                  <div className="truncate font-mono text-[0.7rem] text-muted-foreground">
+                    {item.sku}
                   </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm font-medium text-[var(--success)]">
-                    {formatCurrency(monthData.totalCommission)} commission
-                  </p>
-                </div>
-              </button>
-
-              {/* Month Content */}
-              {isMonthExpanded && (
-                <div className="bg-[var(--background-secondary)] divide-y divide-[var(--border)]">
-                  {monthData.eventDays.map((eventDay) => {
-                    const eventDayKey = `${monthData.month}-${eventDay.eventDate}`
-                    const isEventExpanded = expandedEventDays.has(eventDayKey)
-
-                    return (
-                      <div key={eventDayKey}>
-                        {/* Event Day Header */}
-                        <button
-                          onClick={() => toggleEventDay(eventDayKey)}
-                          className="w-full px-6 py-3 pl-12 flex items-center justify-between hover:bg-[var(--background-tertiary)] transition-colors"
-                        >
-                          <div className="flex items-center gap-3">
-                            <ChevronIcon isOpen={isEventExpanded} />
-                            <div className="text-left">
-                              <h5 className="font-medium text-[var(--foreground)]">
-                                {formatDate(eventDay.eventDate)}
-                              </h5>
-                              <p className="text-xs text-[var(--foreground-secondary)]">
-                                {formatNumber(eventDay.totalOrders)} orders · {eventDay.ticketTypes.length} ticket types
-                              </p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-sm font-medium">{formatCurrency(eventDay.totalAmount)}</p>
-                            <p className="text-xs text-[var(--foreground-secondary)]">
-                              {formatCurrency(eventDay.totalCommission)} comm.
-                            </p>
-                          </div>
-                        </button>
-
-                        {/* Ticket Types Table */}
-                        {isEventExpanded && (
-                          <div className="px-6 py-4 pl-16 bg-[var(--background)]">
-                            <table className="w-full text-sm">
-                              <thead>
-                                <tr className="text-left border-b border-[var(--border)]">
-                                  <th className="pb-2 font-medium text-[var(--foreground-secondary)]">Ticket Type</th>
-                                  <th className="pb-2 font-medium text-[var(--foreground-secondary)]">SKU</th>
-                                  <th className="pb-2 font-medium text-[var(--foreground-secondary)] text-right">Quantity</th>
-                                  <th className="pb-2 font-medium text-[var(--foreground-secondary)] text-right">Total Amount</th>
-                                  <th className="pb-2 font-medium text-[var(--foreground-secondary)] text-right">Commission</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {eventDay.ticketTypes.map((ticket, idx) => (
-                                  <tr
-                                    key={`${ticket.sku}-${idx}`}
-                                    className="border-b border-[var(--border)] last:border-0"
-                                  >
-                                    <td className="py-2 text-[var(--foreground)]">{ticket.eventType || 'Unknown'}</td>
-                                    <td className="py-2 text-[var(--foreground-secondary)] font-mono text-xs">
-                                      {ticket.sku || 'N/A'}
-                                    </td>
-                                    <td className="py-2 text-right font-medium">{formatNumber(ticket.quantity)}</td>
-                                    <td className="py-2 text-right font-medium">{formatCurrency(ticket.totalAmount)}</td>
-                                    <td className="py-2 text-right text-[var(--success)] font-medium">
-                                      {formatCurrency(ticket.totalCommission)}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
+                ) : null}
+              </div>
             </div>
           )
-        })}
+        },
+        size: 320,
+        minSize: 240,
+        enableSorting: false,
+        enableHiding: false,
+        meta: {
+          headerClassName: 'w-[40%]',
+          cellClassName: 'w-[40%]',
+        },
+      },
+      {
+        id: 'kind',
+        accessorKey: 'kind',
+        header: () => <span className="font-medium">Level</span>,
+        cell: ({ row }) => kindBadge(row.original.kind),
+        size: 110,
+        enableSorting: false,
+        meta: {
+          headerClassName: 'w-[12%]',
+          cellClassName: 'w-[12%]',
+        },
+      },
+      {
+        accessorKey: 'orders',
+        header: () => (
+          <span className="block w-full text-right font-medium">Orders / Qty</span>
+        ),
+        cell: ({ row }) => (
+          <span className="block w-full text-right tabular-nums font-medium">
+            {formatNumber(row.original.orders)}
+          </span>
+        ),
+        size: 120,
+        enableSorting: false,
+        meta: {
+          headerClassName: 'w-[14%] text-right',
+          cellClassName: 'w-[14%] text-right',
+        },
+      },
+      {
+        accessorKey: 'amount',
+        header: () => (
+          <span className="block w-full text-right font-medium">Amount</span>
+        ),
+        cell: ({ row }) => (
+          <span className="block w-full text-right tabular-nums font-medium">
+            {formatCurrency(row.original.amount)}
+          </span>
+        ),
+        size: 140,
+        enableSorting: false,
+        meta: {
+          headerClassName: 'w-[17%] text-right',
+          cellClassName: 'w-[17%] text-right',
+        },
+      },
+      {
+        accessorKey: 'commission',
+        header: () => (
+          <span className="block w-full text-right font-medium">Commission</span>
+        ),
+        cell: ({ row }) => (
+          <span className="block w-full text-right tabular-nums font-medium text-success">
+            {formatCurrency(row.original.commission)}
+          </span>
+        ),
+        size: 140,
+        enableSorting: false,
+        meta: {
+          headerClassName: 'w-[17%] text-right',
+          cellClassName: 'w-[17%] text-right',
+        },
+      },
+    ],
+    []
+  )
+
+  const table = useReactTable({
+    data: treeData,
+    columns,
+    getRowId: (row) => row.id,
+    getSubRows: (row) => row.children,
+    defaultColumn: {
+      minSize: 80,
+      size: 120,
+    },
+    state: {
+      pagination,
+      expanded,
+    },
+    paginateExpandedRows: false,
+    onPaginationChange: setPagination,
+    onExpandedChange: setExpanded,
+    getCoreRowModel: getCoreModel,
+    getExpandedRowModel: getExpandedModel,
+    getPaginationRowModel: getPaginationModel,
+    autoResetPageIndex: false,
+  })
+
+  return (
+    <Card className="gap-0 overflow-hidden py-0">
+      <CardHeader className="border-b px-4 py-4">
+        <CardTitle className="text-base">Monthly summary</CardTitle>
+        <CardDescription>
+          Expand months → event days → ticket types (tree data grid)
+        </CardDescription>
+      </CardHeader>
+
+      <div className="p-4 pt-3">
+        {isLoading ? (
+          <DataGrid
+            table={table}
+            recordCount={0}
+            isLoading
+            loadingMode="skeleton"
+            emptyMessage="Loading monthly summary…"
+            tableLayout={TABLE_LAYOUT}
+          >
+            <DataGridContainer>
+              <DataGridTable />
+            </DataGridContainer>
+          </DataGrid>
+        ) : treeData.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            No data available
+          </p>
+        ) : (
+          <DataGrid
+            table={table}
+            recordCount={treeData.length}
+            emptyMessage="No data available"
+            tableLayout={TABLE_LAYOUT}
+          >
+            <div className="w-full space-y-2.5">
+              <DataGridContainer className="w-full overflow-x-auto">
+                <DataGridTable />
+              </DataGridContainer>
+              <DataGridPagination sizes={[4, 8, 16]} />
+            </div>
+          </DataGrid>
+        )}
       </div>
-    </div>
+    </Card>
   )
 }

@@ -78,6 +78,7 @@ interface WooOrder {
   line_items: Array<{
     id: number
     name: string
+    product_id?: number
     sku: string
     quantity: number
     total: string
@@ -339,6 +340,7 @@ function parsePhoneNumber(phone: string, country: string = 'TH'): { raw: string;
 /**
  * Infer zone code and zone name from SKU suffix as a fallback
  * e.g. CADNYE2731E → { zoneCode: 'E', zone: 'Elite' }
+ * CADCNX pattern: …{YY}{DD}{zoneLetter} (e.g. CADCNX2624V → VIP)
  */
 function inferZoneFromSku(sku: string): { zoneCode: string; zone: string } | null {
   const suffixMap: Record<string, string> = {
@@ -346,11 +348,134 @@ function inferZoneFromSku(sku: string): { zoneCode: string; zone: string } | nul
     T: 'Platinum',
     G: 'Gold',
     S: 'Standard',
+    V: 'VIP',
+    P: 'Premium',
     B: 'Shabu',
+    O: 'Observer',
   }
-  const suffix = sku.slice(-1).toUpperCase()
-  if (suffixMap[suffix]) {
-    return { zoneCode: suffix, zone: suffixMap[suffix] }
+  // Handle composite suffixes like P-S after the zone letter path fails
+  const upper = sku.toUpperCase()
+  const last = upper.slice(-1)
+  if (suffixMap[last] && !upper.endsWith('P-S')) {
+    return { zoneCode: last, zone: suffixMap[last] }
+  }
+  if (upper.endsWith('P-S')) {
+    return { zoneCode: 'P', zone: 'Premium' }
+  }
+  return null
+}
+
+/**
+ * Woo rarely stores an `event_type` meta key. Default from SKU prefix so
+ * re-sync does not leave a phantom "Unknown" bucket in the dashboard.
+ */
+function inferEventTypeFromSku(sku: string): string | null {
+  const upper = sku.toUpperCase()
+  if (upper.includes('CADCNX')) return 'Yi Peng Festival'
+  if (upper.includes('CADNYE')) return 'Countdown Festival'
+  return null
+}
+
+/** product_id → YYYY-MM-DD from FooEvents product meta (cached per sync run). */
+const productEventDateCache = new Map<number, string | null>()
+
+/**
+ * CADNYE line items have no pa_date — date lives on the product:
+ * WooCommerceEventsDate / WooCommerceEventsDateMySQLFormat.
+ */
+async function fetchProductEventDate(productId: number): Promise<string | null> {
+  if (productEventDateCache.has(productId)) {
+    return productEventDateCache.get(productId) ?? null
+  }
+
+  try {
+    const url = `${WOOCOMMERCE_URL}/wp-json/wc/v3/products/${productId}?_fields=id,meta_data`
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Basic ${wooAuthHeader()}`,
+        'Content-Type': 'application/json',
+      },
+    })
+    if (!response.ok) {
+      productEventDateCache.set(productId, null)
+      return null
+    }
+    const product = (await response.json()) as { meta_data?: WooMeta[] }
+    const meta = product.meta_data ?? []
+
+    const mysql = metaAsString(getMetaValue(meta, 'WooCommerceEventsDateMySQLFormat'))
+    if (mysql && !mysql.startsWith('1970-01-01')) {
+      const day = mysql.slice(0, 10)
+      if (/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+        productEventDateCache.set(productId, day)
+        return day
+      }
+    }
+
+    const human = metaAsString(getMetaValue(meta, 'WooCommerceEventsDate'))
+    if (human) {
+      // "December 31, 2026"
+      const parsed = Date.parse(human)
+      if (!Number.isNaN(parsed)) {
+        const d = new Date(parsed)
+        const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+        productEventDateCache.set(productId, day)
+        return day
+      }
+    }
+
+    productEventDateCache.set(productId, null)
+    return null
+  } catch {
+    productEventDateCache.set(productId, null)
+    return null
+  }
+}
+
+/**
+ * Fallback when Woo has no date meta.
+ * Latest SKU scheme is year-then-day: CADCNX2624V → 2026-11-24, CADNYE2731S → countdown
+ * brand year 27 → event night 2026-12-31 (Dec 31 of brandYear-1).
+ * Older CADCNX used day-then-year (1524 → 15 Nov 2024) — prefer pa_date for those.
+ */
+function inferEventDateFromSku(sku: string): string | null {
+  const upper = sku.toUpperCase()
+
+  // CADNYE{YY}{DD}{zone} — always Dec 31 of the night ringing in brand year YY
+  const nye = upper.match(/^CADNYE(\d{2})(\d{2})[A-Z]/S)?$/i)
+  if (nye) {
+    const brandYear = 2000 + parseInt(nye[1], 10)
+    const day = parseInt(nye[2], 10)
+    if (day === 31) {
+      // Countdown 2027 product → 2026-12-31
+      return `${brandYear - 1}-12-31`
+    }
+    return `${brandYear}-12-${String(day).padStart(2, '0')}`
+  }
+
+  // CADCNX{YY}{DD}{zone} — current season (YY >= 26) is year-then-day in November
+  const cnx = upper.match(/^CADCNX(\d{2})(\d{2})([A-Z]|P-S)$/i)
+  if (cnx) {
+    const yy = parseInt(cnx[1], 10)
+    const dd = parseInt(cnx[2], 10)
+    if (yy >= 26 && dd >= 1 && dd <= 31) {
+      return `20${String(yy).padStart(2, '0')}-11-${String(dd).padStart(2, '0')}`
+    }
+  }
+
+  return null
+}
+
+function lineItemProductId(lineItem: {
+  product_id?: number
+  meta_data: WooMeta[]
+}): number | null {
+  if (lineItem.product_id && lineItem.product_id > 0) return lineItem.product_id
+  const extras = getMetaValue(lineItem.meta_data, 'product_extras')
+  if (isRecord(extras) && typeof extras.product_id === 'number') return extras.product_id
+  if (isRecord(extras) && typeof extras.product_id === 'string') {
+    const n = parseInt(extras.product_id, 10)
+    return Number.isFinite(n) ? n : null
   }
   return null
 }
@@ -626,31 +751,59 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
           metaAsString(getMetaValue(lineItem.meta_data, 'pa_pickup'))
       }
 
-      // Extract event date from pa_date variation
+      // Event date: Yi Peng uses pa_date; CADNYE has no variation date — use product FooEvents.
       let eventDate: string | null = metaAsString(getMetaValue(lineItem.meta_data, 'pa_date')) || null
       if (eventDate) {
         // Convert from "25-november-2026" format to "2026-11-25" format
         eventDate = convertEventDate(eventDate)
       }
       if (!eventDate) {
-        eventDate =
+        const raw =
           metaAsString(getMetaValue(lineItem.meta_data, 'event_date')) ||
           metaAsString(getMetaValue(order.meta_data, 'event_date')) ||
           null
+        eventDate = raw ? convertEventDate(raw) || raw : null
       }
+      if (!eventDate) {
+        const productId = lineItemProductId(lineItem)
+        if (productId) {
+          eventDate = await fetchProductEventDate(productId)
+        }
+      }
+      if (!eventDate) {
+        eventDate = inferEventDateFromSku(lineItem.sku)
+      }
+
+      const typeLabel = metaAsString(getMetaValue(lineItem.meta_data, 'type'))
+      const typeZoneMap: Record<string, { zoneCode: string; zone: string }> = {
+        elite: { zoneCode: 'E', zone: 'Elite' },
+        platinum: { zoneCode: 'T', zone: 'Platinum' },
+        gold: { zoneCode: 'G', zone: 'Gold' },
+        standard: { zoneCode: 'S', zone: 'Standard' },
+        vip: { zoneCode: 'V', zone: 'VIP' },
+        premium: { zoneCode: 'P', zone: 'Premium' },
+        shabu: { zoneCode: 'B', zone: 'Shabu' },
+        observer: { zoneCode: 'O', zone: 'Observer' },
+      }
+      const typeZone = typeLabel ? typeZoneMap[typeLabel.toLowerCase()] : null
 
       const metaZoneCode =
         metaAsString(getMetaValue(lineItem.meta_data, 'zone_code')) ||
-        metaAsString(getMetaValue(lineItem.meta_data, 'pa_zone'))
+        metaAsString(getMetaValue(lineItem.meta_data, 'pa_zone')) ||
+        typeZone?.zoneCode ||
+        null
       const metaZone =
         metaAsString(getMetaValue(lineItem.meta_data, 'zone')) ||
-        metaAsString(getMetaValue(lineItem.meta_data, 'pa_zone_name'))
+        metaAsString(getMetaValue(lineItem.meta_data, 'pa_zone_name')) ||
+        typeZone?.zone ||
+        null
       const inferredZone = (!metaZoneCode || !metaZone) ? inferZoneFromSku(lineItem.sku) : null
       const zoneCode = metaZoneCode || inferredZone?.zoneCode || null
       const zone = metaZone || inferredZone?.zone || null
       const eventType =
         metaAsString(getMetaValue(lineItem.meta_data, 'event_type')) ||
         metaAsString(getMetaValue(order.meta_data, 'event_type')) ||
+        inferEventTypeFromSku(lineItem.sku) ||
         null
 
       // Parse phone number
@@ -703,6 +856,10 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
 
       const bookingData = {
         woo_id: order.id,
+        // Real Woo order time — dashboard monthly/daily use this (not Supabase created_at)
+        order_created_at: order.date_created
+          ? new Date(order.date_created).toISOString()
+          : null,
         firstname: order.billing.first_name,
         lastname: order.billing.last_name,
         email: order.billing.email,

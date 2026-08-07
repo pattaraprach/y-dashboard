@@ -5,6 +5,8 @@ export type Database = {
                 Row: {
                     id: number
                     created_at: string | null
+                    /** Woo order.date_created — sales metrics; not Supabase insert time */
+                    order_created_at: string | null
                     woo_id: number
                     firstname: string
                     lastname: string

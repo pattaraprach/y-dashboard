@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "reui": {
+      "type": "http",
+      "url": "https://mcp.reui.io/api/mcp",
+      "headers": {
+        "Authorization": "Bearer reui_pat_1EEDFXqppagMHlj459sUGr7-_sOlFAGxeUBZ_Va2fhM"
+      }
+    }
+  }
+}

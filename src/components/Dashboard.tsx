@@ -1,7 +1,11 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { supabase } from '@/lib/supabase'
+import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react'
+import {
+  loadDashboardSnapshot,
+  resyncDashboardSnapshot,
+} from '@/app/actions/dashboard'
+import type { DashboardSnapshot } from '@/lib/build-dashboard-snapshot'
 import {
   buildBookingExportCsv,
   buildGroupedExportText,
@@ -16,6 +20,10 @@ import { DailyChart } from '@/components/dashboard/DailyChart'
 import { MonthlySummary } from '@/components/dashboard/MonthlySummary'
 import { OrdersTable } from '@/components/orders/OrdersTable'
 import { OrderModal } from '@/components/orders/OrderModal'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Spinner } from '@/components/ui/spinner'
+import { cn } from '@/lib/utils'
 import type {
   BookingWithAttendees,
   DashboardMetrics,
@@ -24,6 +32,7 @@ import type {
   HourlyMetrics,
   MonthlySummary as MonthlySummaryType,
 } from '@/types/database'
+import { RefreshCwIcon, SearchIcon, XIcon } from 'lucide-react'
 
 interface DashboardProps {
   eventCode: 'CADCNX' | 'CADNYE'
@@ -32,54 +41,52 @@ interface DashboardProps {
 
 // Icons as SVG components
 const OrdersIcon = () => (
-  <svg className="w-6 h-6 text-[var(--primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <svg className="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
   </svg>
 )
 
 const GuestsIcon = () => (
-  <svg className="w-6 h-6 text-[var(--accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <svg className="w-6 h-6 text-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
   </svg>
 )
 
 const AmountIcon = () => (
-  <svg className="w-6 h-6 text-[var(--success)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <svg className="w-6 h-6 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
   </svg>
 )
 
 const CommissionIcon = () => (
-  <svg className="w-6 h-6 text-[var(--primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <svg className="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" />
   </svg>
 )
 
 const FeesIcon = () => (
-  <svg className="w-6 h-6 text-[var(--warning)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <svg className="w-6 h-6 text-warning-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
   </svg>
 )
 
 const ProfitIcon = () => (
-  <svg className="w-6 h-6 text-[var(--success)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <svg className="w-6 h-6 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
   </svg>
 )
 
 const VATIcon = () => (
-  <svg className="w-6 h-6 text-[var(--accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <svg className="w-6 h-6 text-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
   </svg>
 )
 
 const RSHIcon = () => (
-  <svg className="w-6 h-6 text-[var(--warning)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  <svg className="w-6 h-6 text-warning-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
   </svg>
 )
-
-const ITEMS_PER_PAGE = 25
 
 type RshFilter = 'all' | 'rsh' | 'non-rsh'
 type StatusFilter = 'active' | 'cancelled' | 'all'
@@ -92,303 +99,72 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
   const [monthlySummary, setMonthlySummary] = useState<MonthlySummaryType[]>([])
   const [allBookings, setAllBookings] = useState<BookingWithAttendees[]>([])
   const [selectedBooking, setSelectedBooking] = useState<BookingWithAttendees | null>(null)
+  const [availableEventDates, setAvailableEventDates] = useState<string[]>([])
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [isResyncing, setIsResyncing] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
-  // Search and filter state
+  // Search and filter state (client-side on cached snapshot)
   const [searchTerm, setSearchTerm] = useState('')
   const [rshFilter, setRshFilter] = useState<RshFilter>('all')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('active')
   const [eventDateFilter, setEventDateFilter] = useState('')
-  const [availableEventDates, setAvailableEventDates] = useState<string[]>([])
 
-  // Pagination state
-  const [currentPage, setCurrentPage] = useState(1)
-
-  // Fetch unique event dates on mount
-  useEffect(() => {
-    const fetchEventDates = async () => {
-      const { data } = await supabase
-        .from('cad_yip_bookings')
-        .select('event_date')
-        .not('event_date', 'is', null)
-        .order('event_date', { ascending: true })
-
-      if (data) {
-        const uniqueDates = [...new Set(data.map(d => d.event_date).filter(Boolean))] as string[]
-        setAvailableEventDates(uniqueDates)
-      }
-    }
-    fetchEventDates()
+  const applySnapshot = useCallback((snapshot: DashboardSnapshot) => {
+    setAllBookings(snapshot.bookings)
+    setMetrics(snapshot.metrics)
+    setEventMetrics(snapshot.eventMetrics)
+    setDailyMetrics(snapshot.dailyMetrics)
+    setHourlyMetrics(snapshot.hourlyMetrics)
+    setMonthlySummary(snapshot.monthlySummary)
+    setAvailableEventDates(snapshot.availableEventDates)
+    setGeneratedAt(snapshot.generatedAt)
+    setLoadError(null)
   }, [])
 
-  const fetchData = useCallback(async () => {
+  const loadFromCache = useCallback(async () => {
     setIsLoading(true)
-
+    setLoadError(null)
     try {
-      // Fetch ALL bookings with full attendee names (needed for per-person export)
-      const allBookings: BookingWithAttendees[] = []
-      const BATCH_SIZE = 1000
-      let offset = 0
-      let hasMore = true
-
-      // Fetch data in batches until we have all records
-      while (hasMore) {
-        const { data: batchData, error: batchError } = await supabase
-          .from('cad_yip_bookings')
-          .select('*, cad_yip_attendees(id, attendee_firstname, attendee_lastname)')
-          .order('created_at', { ascending: false })
-          .range(offset, offset + BATCH_SIZE - 1)
-
-        if (batchError) throw batchError
-
-        const typedBatch = (batchData || []) as BookingWithAttendees[]
-        allBookings.push(...typedBatch)
-
-        // If we got fewer records than BATCH_SIZE, we've reached the end
-        hasMore = typedBatch.length === BATCH_SIZE
-        offset += BATCH_SIZE
-      }
-
-      // Filter bookings by event code (SKU contains eventCode)
-      const fetchedBookings = allBookings.filter(booking =>
-        booking.sku?.toUpperCase().includes(eventCode.toUpperCase())
-      )
-
-      setAllBookings(fetchedBookings)
-
-      // Metrics exclude cancelled bookings so totals stay operationally accurate
-      const activeBookings = fetchedBookings.filter(b => !b.is_cancelled)
-
-      // Calculate attendees by booking from the nested data
-      const attendeesByBooking = new Map<number, number>()
-      fetchedBookings.forEach((b) => {
-        // Count entries in the nested array
-        const count = b.cad_yip_attendees?.length || 0
-        attendeesByBooking.set(b.id, count)
-      })
-
-      // Calculate aggregated metrics (active only)
-      const totalOrders = activeBookings.length
-      const totalGuests = activeBookings.reduce((sum, b) => sum + (b.cad_yip_attendees?.length || 0), 0)
-      const totalAmount = activeBookings.reduce((sum, b) => sum + Number(b.amount), 0)
-      const totalCommission = activeBookings.reduce((sum, b) => sum + Number(b.commission), 0)
-      const totalFees = activeBookings.reduce((sum, b) => sum + Number(b.fees), 0)
-      const totalProfit = totalCommission - totalFees
-      const estimatedProfitAfterVAT = totalProfit * 0.93
-      const rshAttendees = activeBookings
-        .filter(b => b.is_rsh_transfer)
-        .reduce((sum, b) => sum + (b.cad_yip_attendees?.length || 0), 0)
-
-      const rshByDayMap = new Map<string, number>()
-      activeBookings
-        .filter(b => b.is_rsh_transfer)
-        .forEach(b => {
-          const day = b.event_date || 'Unknown'
-          rshByDayMap.set(day, (rshByDayMap.get(day) || 0) + (b.cad_yip_attendees?.length || 0))
-        })
-      const rshAttendeesByDay = Array.from(rshByDayMap.entries())
-        .map(([date, count]) => ({ date, count }))
-        .sort((a, b) => a.date.localeCompare(b.date))
-
-      setMetrics({
-        totalOrders,
-        totalGuests,
-        totalAmount,
-        totalCommission,
-        totalFees,
-        totalProfit,
-        estimatedProfitAfterVAT,
-        rshAttendees,
-        rshAttendeesByDay,
-      })
-
-      // Calculate event metrics
-      const eventMap = new Map<string, { guests: number; orders: number; amount: number; commission: number }>()
-
-      activeBookings.forEach((booking) => {
-        const eventType = booking.event_type || 'Unknown'
-        const current = eventMap.get(eventType) || { guests: 0, orders: 0, amount: 0, commission: 0 }
-        const guestCount = attendeesByBooking.get(booking.id) || 0
-        eventMap.set(eventType, {
-          guests: current.guests + guestCount,
-          orders: current.orders + 1,
-          amount: current.amount + Number(booking.amount),
-          commission: current.commission + Number(booking.commission),
-        })
-      })
-
-      const events: EventMetrics[] = Array.from(eventMap.entries())
-        .map(([eventType, data]) => ({
-          eventType,
-          totalGuests: data.guests,
-          totalOrders: data.orders,
-          totalAmount: data.amount,
-          totalCommission: data.commission,
-        }))
-        .sort((a, b) => b.totalGuests - a.totalGuests)
-
-      setEventMetrics(events)
-
-      // Calculate daily booking counts by date entered (created_at)
-      const dailyMap = new Map<string, { guests: number; orders: number; rshOrders: number; nonRshOrders: number }>()
-
-      activeBookings.forEach((booking) => {
-        if (!booking.created_at) return
-        const date = booking.created_at.split('T')[0]
-        const current = dailyMap.get(date) || { guests: 0, orders: 0, rshOrders: 0, nonRshOrders: 0 }
-        const guestCount = attendeesByBooking.get(booking.id) || 0
-        const isRsh = booking.is_rsh_transfer
-
-        dailyMap.set(date, {
-          guests: current.guests + guestCount,
-          orders: current.orders + 1,
-          rshOrders: current.rshOrders + (isRsh ? 1 : 0),
-          nonRshOrders: current.nonRshOrders + (isRsh ? 0 : 1),
-        })
-      })
-
-      const daily: DailyMetrics[] = Array.from(dailyMap.entries())
-        .map(([date, data]) => ({
-          date,
-          totalGuests: data.guests,
-          totalOrders: data.orders,
-          rshGuests: data.rshOrders,
-          nonRshGuests: data.nonRshOrders,
-        }))
-
-      setDailyMetrics(daily)
-
-      // Compute rolling 24-hour hourly metrics
-      const nowTs = Date.now()
-      const hourly: HourlyMetrics[] = Array.from({ length: 24 }, (_, i) => {
-        const slotStart = nowTs - (24 - i) * 3_600_000
-        const slotEnd   = nowTs - (23 - i) * 3_600_000
-        const label = new Date(slotStart).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-
-        let totalOrders = 0, rshOrders = 0, nonRshOrders = 0, totalGuests = 0
-        activeBookings.forEach(b => {
-          if (!b.created_at) return
-          const ts = new Date(b.created_at).getTime()
-          if (ts >= slotStart && ts < slotEnd) {
-            totalOrders++
-            if (b.is_rsh_transfer) rshOrders++
-            else nonRshOrders++
-            totalGuests += attendeesByBooking.get(b.id) || 0
-          }
-        })
-
-        return { label, totalOrders, rshOrders, nonRshOrders, totalGuests }
-      })
-      setHourlyMetrics(hourly)
-
-      // Calculate monthly summary
-      // Group bookings by month (based on created_at) and event date
-      const monthlyMap = new Map<string, Map<string, Map<string, { sku: string; eventType: string; quantity: number; totalAmount: number; totalCommission: number }>>>()
-
-      activeBookings.forEach((booking) => {
-        if (!booking.created_at) return
-
-        // Use created_at to determine the month
-        const createdDate = new Date(booking.created_at)
-        const month = `${createdDate.getFullYear()}-${String(createdDate.getMonth() + 1).padStart(2, '0')}`
-
-        // Still track event_date within each month (use placeholder if missing)
-        const eventDate = booking.event_date || 'No Event Date'
-        const sku = booking.sku || 'Unknown'
-        const eventType = booking.event_type || 'Unknown'
-
-        // Get or create month map
-        if (!monthlyMap.has(month)) {
-          monthlyMap.set(month, new Map())
-        }
-        const eventDaysMap = monthlyMap.get(month)!
-
-        // Get or create event day map
-        if (!eventDaysMap.has(eventDate)) {
-          eventDaysMap.set(eventDate, new Map())
-        }
-        const ticketTypesMap = eventDaysMap.get(eventDate)!
-
-        // Get or create ticket type entry
-        const ticketKey = `${sku}-${eventType}`
-        const current = ticketTypesMap.get(ticketKey) || {
-          sku,
-          eventType,
-          quantity: 0,
-          totalAmount: 0,
-          totalCommission: 0,
-        }
-
-        ticketTypesMap.set(ticketKey, {
-          sku,
-          eventType,
-          quantity: current.quantity + 1,
-          totalAmount: current.totalAmount + Number(booking.amount),
-          totalCommission: current.totalCommission + Number(booking.commission),
-        })
-      })
-
-      // Convert to array format
-      const monthlySummaryData: MonthlySummaryType[] = Array.from(monthlyMap.entries())
-        .map(([month, eventDaysMap]) => {
-          const eventDays = Array.from(eventDaysMap.entries())
-            .map(([eventDate, ticketTypesMap]) => {
-              const ticketTypes = Array.from(ticketTypesMap.values())
-              const totalOrders = ticketTypes.reduce((sum, t) => sum + t.quantity, 0)
-              const totalAmount = ticketTypes.reduce((sum, t) => sum + t.totalAmount, 0)
-              const totalCommission = ticketTypes.reduce((sum, t) => sum + t.totalCommission, 0)
-
-              return {
-                eventDate,
-                ticketTypes: ticketTypes.sort((a, b) => b.quantity - a.quantity),
-                totalOrders,
-                totalAmount,
-                totalCommission,
-              }
-            })
-            .sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime())
-
-          const totalOrders = eventDays.reduce((sum, d) => sum + d.totalOrders, 0)
-          const totalAmount = eventDays.reduce((sum, d) => sum + d.totalAmount, 0)
-          const totalCommission = eventDays.reduce((sum, d) => sum + d.totalCommission, 0)
-
-          const [year, monthNum] = month.split('-')
-          const monthDisplay = new Date(parseInt(year), parseInt(monthNum) - 1, 1).toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'long',
-          })
-
-          return {
-            month,
-            monthDisplay,
-            eventDays,
-            totalOrders,
-            totalAmount,
-            totalCommission,
-          }
-        })
-        .sort((a, b) => b.month.localeCompare(a.month)) // Sort by month descending (newest first)
-
-      setMonthlySummary(monthlySummaryData)
+      const snapshot = await loadDashboardSnapshot(eventCode)
+      applySnapshot(snapshot)
     } catch (error) {
-      console.error('Error fetching data:', error)
+      console.error('Error loading dashboard snapshot:', error)
+      setLoadError(
+        error instanceof Error ? error.message : 'Failed to load dashboard data'
+      )
     } finally {
       setIsLoading(false)
     }
-  }, [eventCode])
+  }, [eventCode, applySnapshot])
+
+  const handleResync = useCallback(async () => {
+    setIsResyncing(true)
+    setLoadError(null)
+    try {
+      const snapshot = await resyncDashboardSnapshot(eventCode)
+      applySnapshot(snapshot)
+    } catch (error) {
+      console.error('Error resyncing dashboard:', error)
+      setLoadError(
+        error instanceof Error ? error.message : 'Failed to resync dashboard'
+      )
+    } finally {
+      setIsResyncing(false)
+    }
+  }, [eventCode, applySnapshot])
 
   useEffect(() => {
-    // Defer so setState inside fetchData is not synchronous in the effect body
-    // (react-hooks/set-state-in-effect).
     let cancelled = false
     const timer = setTimeout(() => {
-      if (!cancelled) void fetchData()
+      if (!cancelled) void loadFromCache()
     }, 0)
     return () => {
       cancelled = true
       clearTimeout(timer)
     }
-  }, [fetchData])
+  }, [loadFromCache])
 
   /**
    * Shared filter for table + export.
@@ -436,7 +212,10 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
         })
       }
 
-      return result
+      // Latest Woo orders first (woo_id is monotonic; created_at is insert time).
+      return [...result].sort(
+        (a, b) => (b.woo_id ?? 0) - (a.woo_id ?? 0)
+      )
     },
     [allBookings, statusFilter, rshFilter, eventDateFilter, searchTerm]
   )
@@ -448,40 +227,22 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
     [filterBookings]
   )
 
-  // Paginate the filtered results
   const totalCount = filteredBookings.length
-  const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE)
-
-  const paginatedBookings = useMemo(() => {
-    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
-    const endIndex = startIndex + ITEMS_PER_PAGE
-    return filteredBookings.slice(startIndex, endIndex)
-  }, [filteredBookings, currentPage])
-
-  const handlePageChange = (page: number) => {
-    if (page >= 1 && page <= totalPages) {
-      setCurrentPage(page)
-    }
-  }
 
   const handleSearchChange = (value: string) => {
     setSearchTerm(value)
-    setCurrentPage(1)
   }
 
   const handleRshFilterChange = (filter: RshFilter) => {
     setRshFilter(filter)
-    setCurrentPage(1)
   }
 
   const handleStatusFilterChange = (filter: StatusFilter) => {
     setStatusFilter(filter)
-    setCurrentPage(1)
   }
 
   const handleEventDateFilterChange = (value: string) => {
     setEventDateFilter(value)
-    setCurrentPage(1)
   }
 
   const clearFilters = () => {
@@ -489,7 +250,6 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
     setRshFilter('all')
     setStatusFilter('active')
     setEventDateFilter('')
-    setCurrentPage(1)
   }
 
   const handleExport = () => {
@@ -538,17 +298,49 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
       <EventNav />
 
       {/* Header */}
-      <header className="mb-8">
-        <h1 className="text-3xl font-bold text-[var(--foreground)] mb-2">
-          {eventName} Dashboard
-        </h1>
-        <p className="text-[var(--foreground-secondary)]">
-          Real-time booking analytics and management
-        </p>
+      <header className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="mb-2 text-3xl font-bold text-foreground">
+            {eventName} Dashboard
+          </h1>
+          <p className="text-muted-foreground">
+            Cached event snapshot · filter and export locally after load
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {generatedAt
+              ? `Last synced ${new Date(generatedAt).toLocaleString()}`
+              : isLoading
+                ? 'Loading snapshot…'
+                : 'Not synced yet'}
+          </p>
+          {loadError ? (
+            <p className="mt-1 text-sm text-destructive">{loadError}</p>
+          ) : null}
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void handleResync()}
+          disabled={isLoading || isResyncing}
+          className="shrink-0"
+        >
+          {isResyncing ? (
+            <>
+              <Spinner />
+              Resyncing…
+            </>
+          ) : (
+            <>
+              <RefreshCwIcon className="size-4" />
+              Resync
+            </>
+          )}
+        </Button>
       </header>
 
       {/* Metrics Grid */}
-      <section className="dashboard-grid mb-8">
+      <section className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           title="Total Orders"
           value={metrics ? formatNumber(metrics.totalOrders) : '—'}
@@ -618,147 +410,101 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
       </section>
 
       {/* Orders Section */}
-      <section>
-        <div className="flex flex-col gap-4 mb-6">
-          {/* Title and Search Row */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <h2 className="text-xl font-semibold text-[var(--foreground)]">
-              Orders
-            </h2>
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder="Search by ID, name, email, seat, pickup, date..."
+      <section className="space-y-4">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-foreground">Orders</h2>
+              <p className="text-sm text-muted-foreground">
+                {totalCount} matching order{totalCount === 1 ? '' : 's'}
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="relative w-full sm:w-80">
+                <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
                   value={searchTerm}
                   onChange={(e) => handleSearchChange(e.target.value)}
-                  className="input pl-10 w-full sm:w-80"
+                  placeholder="Search ID, name, email, seat, pickup…"
+                  className="pl-8"
                 />
-                <svg
-                  className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--foreground-muted)]"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                  />
-                </svg>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => void handleCopyGrouped()}
                   disabled={filteredBookings.length === 0}
-                  className="btn btn-secondary text-sm whitespace-nowrap disabled:opacity-50"
-                  title="Copy parties: order header (incl. Active/Cancelled) + attendee names"
                 >
                   Copy parties
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  size="sm"
                   onClick={handleExport}
                   disabled={filteredBookings.length === 0}
-                  className="btn btn-primary text-sm whitespace-nowrap disabled:opacity-50"
-                  title="CSV: one row per attendee, grouped by Order ID, with Status column"
                 >
                   Export CSV
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="secondary"
+                  size="sm"
                   onClick={handleExportRsh}
                   disabled={rshExportBookings.length === 0}
-                  className="btn btn-secondary text-sm whitespace-nowrap disabled:opacity-50"
-                  title="RSH only; respects Status filter (default Active = no cancelled)"
                 >
                   Export RSH
-                </button>
+                </Button>
               </div>
             </div>
           </div>
 
-          {/* Filters Row */}
-          <div className="flex flex-wrap items-center gap-4">
-            {/* Status Filter */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-[var(--foreground-secondary)]">Status:</span>
-              <div className="flex rounded-lg overflow-hidden border border-[var(--border)]">
-                <button
-                  onClick={() => handleStatusFilterChange('active')}
-                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${statusFilter === 'active'
-                    ? 'bg-[var(--primary)] text-white'
-                    : 'bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)]'
-                    }`}
+          <div className="flex flex-wrap items-center gap-3">
+            <FilterGroup label="Status">
+              {(
+                [
+                  ['active', 'Active'],
+                  ['cancelled', 'Cancelled'],
+                  ['all', 'All'],
+                ] as const
+              ).map(([value, label]) => (
+                <FilterButton
+                  key={value}
+                  active={statusFilter === value}
+                  onClick={() => handleStatusFilterChange(value)}
                 >
-                  Active
-                </button>
-                <button
-                  onClick={() => handleStatusFilterChange('cancelled')}
-                  className={`px-3 py-1.5 text-sm font-medium transition-colors border-x border-[var(--border)] ${statusFilter === 'cancelled'
-                    ? 'bg-[var(--primary)] text-white'
-                    : 'bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)]'
-                    }`}
-                >
-                  Cancelled
-                </button>
-                <button
-                  onClick={() => handleStatusFilterChange('all')}
-                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${statusFilter === 'all'
-                    ? 'bg-[var(--primary)] text-white'
-                    : 'bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)]'
-                    }`}
-                >
-                  All
-                </button>
-              </div>
-            </div>
+                  {label}
+                </FilterButton>
+              ))}
+            </FilterGroup>
 
-            {/* RSH Transfer Filter */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-[var(--foreground-secondary)]">Transfer:</span>
-              <div className="flex rounded-lg overflow-hidden border border-[var(--border)]">
-                <button
-                  onClick={() => handleRshFilterChange('all')}
-                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${rshFilter === 'all'
-                    ? 'bg-[var(--primary)] text-white'
-                    : 'bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)]'
-                    }`}
+            <FilterGroup label="Transfer">
+              {(
+                [
+                  ['all', 'All'],
+                  ['rsh', 'RSH'],
+                  ['non-rsh', 'Non-RSH'],
+                ] as const
+              ).map(([value, label]) => (
+                <FilterButton
+                  key={value}
+                  active={rshFilter === value}
+                  onClick={() => handleRshFilterChange(value)}
                 >
-                  All
-                </button>
-                <button
-                  onClick={() => handleRshFilterChange('rsh')}
-                  className={`px-3 py-1.5 text-sm font-medium transition-colors border-x border-[var(--border)] ${rshFilter === 'rsh'
-                    ? 'bg-[var(--primary)] text-white'
-                    : 'bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)]'
-                    }`}
-                >
-                  RSH Only
-                </button>
-                <button
-                  onClick={() => handleRshFilterChange('non-rsh')}
-                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${rshFilter === 'non-rsh'
-                    ? 'bg-[var(--primary)] text-white'
-                    : 'bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)]'
-                    }`}
-                >
-                  Non-RSH
-                </button>
-              </div>
-            </div>
+                  {label}
+                </FilterButton>
+              ))}
+            </FilterGroup>
 
-            {/* Event Date Filter - Dropdown */}
             <div className="flex items-center gap-2">
-              <span className="text-sm text-[var(--foreground-secondary)]">Event Date:</span>
+              <span className="text-sm text-muted-foreground">Event date</span>
               <select
                 value={eventDateFilter}
                 onChange={(e) => handleEventDateFilterChange(e.target.value)}
-                className="input py-1.5 text-sm min-w-[180px]"
+                className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
               >
-                <option value="">All Dates</option>
+                <option value="">All dates</option>
                 {availableEventDates.map((date) => (
                   <option key={date} value={date}>
                     {formatDateDisplay(date)}
@@ -767,105 +513,70 @@ export default function Dashboard({ eventCode, eventName }: DashboardProps) {
               </select>
             </div>
 
-            {/* Clear Filters Button */}
-            {hasActiveFilters && (
-              <button
-                onClick={clearFilters}
-                className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-[var(--warning)] hover:text-[var(--warning-hover)] transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-                Clear Filters
-              </button>
-            )}
-
-            {/* Results Count */}
-            <div className="ml-auto text-sm text-[var(--foreground-secondary)]">
-              Showing {paginatedBookings.length} of {totalCount} orders
-            </div>
+            {hasActiveFilters ? (
+              <Button type="button" variant="ghost" size="sm" onClick={clearFilters}>
+                <XIcon className="size-4" />
+                Clear filters
+              </Button>
+            ) : null}
           </div>
         </div>
 
         <OrdersTable
-          bookings={paginatedBookings}
+          bookings={filteredBookings}
           onRowClick={setSelectedBooking}
           isLoading={isLoading}
         />
-
-        {/* Pagination Controls */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-center gap-2 mt-6">
-            <button
-              onClick={() => handlePageChange(1)}
-              disabled={currentPage === 1}
-              className="px-3 py-2 text-sm font-medium rounded-lg bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              First
-            </button>
-            <button
-              onClick={() => handlePageChange(currentPage - 1)}
-              disabled={currentPage === 1}
-              className="px-3 py-2 text-sm font-medium rounded-lg bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              Previous
-            </button>
-
-            <div className="flex items-center gap-1">
-              {/* Page number buttons */}
-              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                let pageNum: number
-                if (totalPages <= 5) {
-                  pageNum = i + 1
-                } else if (currentPage <= 3) {
-                  pageNum = i + 1
-                } else if (currentPage >= totalPages - 2) {
-                  pageNum = totalPages - 4 + i
-                } else {
-                  pageNum = currentPage - 2 + i
-                }
-                return (
-                  <button
-                    key={pageNum}
-                    onClick={() => handlePageChange(pageNum)}
-                    className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors ${currentPage === pageNum
-                      ? 'bg-[var(--primary)] text-white'
-                      : 'bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)]'
-                      }`}
-                  >
-                    {pageNum}
-                  </button>
-                )
-              })}
-            </div>
-
-            <button
-              onClick={() => handlePageChange(currentPage + 1)}
-              disabled={currentPage === totalPages}
-              className="px-3 py-2 text-sm font-medium rounded-lg bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              Next
-            </button>
-            <button
-              onClick={() => handlePageChange(totalPages)}
-              disabled={currentPage === totalPages}
-              className="px-3 py-2 text-sm font-medium rounded-lg bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              Last
-            </button>
-          </div>
-        )}
       </section>
 
-      {/* Order Modal */}
-      {selectedBooking && (
-        <OrderModal
-          key={selectedBooking.id}
-          booking={selectedBooking}
-          onClose={() => setSelectedBooking(null)}
-          onUpdate={fetchData}
-        />
-      )}
+      <OrderModal
+        key={selectedBooking?.id ?? 'closed'}
+        booking={selectedBooking}
+        onClose={() => setSelectedBooking(null)}
+        onUpdate={() => {
+          void handleResync()
+        }}
+      />
     </div>
+  )
+}
+
+function FilterGroup({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <div className="flex overflow-hidden rounded-lg border">{children}</div>
+    </div>
+  )
+}
+
+function FilterButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'px-3 py-1.5 text-sm font-medium transition-colors',
+        active
+          ? 'bg-primary text-primary-foreground'
+          : 'bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+      )}
+    >
+      {children}
+    </button>
   )
 }

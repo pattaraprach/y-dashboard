@@ -186,7 +186,7 @@ export function PriceSync({ eventCode, eventName, onSyncComplete }: PriceSyncPro
     <div className="card">
       <div className="card-header">
         <h3 className="card-title">Commission Sync - {eventName}</h3>
-        <p className="text-sm text-[var(--foreground-secondary)] mt-1">
+        <p className="text-sm text-muted-foreground mt-1">
           Update booking commissions from the price database
         </p>
       </div>
@@ -208,25 +208,25 @@ export function PriceSync({ eventCode, eventName, onSyncComplete }: PriceSyncPro
         {!syncAll && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-[var(--foreground-secondary)] mb-1">
+              <label className="block text-sm font-medium text-muted-foreground mb-1">
                 From Date
               </label>
               <input
                 type="date"
                 value={dateFrom}
                 onChange={(e) => setDateFrom(e.target.value)}
-                className="input w-full"
+                className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-[var(--foreground-secondary)] mb-1">
+              <label className="block text-sm font-medium text-muted-foreground mb-1">
                 To Date
               </label>
               <input
                 type="date"
                 value={dateTo}
                 onChange={(e) => setDateTo(e.target.value)}
-                className="input w-full"
+                className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
               />
             </div>
           </div>
@@ -255,23 +255,23 @@ export function PriceSync({ eventCode, eventName, onSyncComplete }: PriceSyncPro
 
         {/* Sync Result */}
         {syncResult && (
-          <div className="mt-4 p-4 rounded-lg bg-[var(--background-secondary)] border border-[var(--border)]">
+          <div className="mt-4 p-4 rounded-lg bg-muted border border-border">
             <h4 className="font-semibold mb-2">Sync Results</h4>
             <div className="space-y-1 text-sm">
-              <p className="text-[var(--success)]">✓ Updated: {syncResult.success}</p>
-              <p className="text-[var(--foreground-secondary)]">○ Skipped: {syncResult.skipped}</p>
+              <p className="text-success">✓ Updated: {syncResult.success}</p>
+              <p className="text-muted-foreground">○ Skipped: {syncResult.skipped}</p>
               {syncResult.errors > 0 && (
-                <p className="text-[var(--warning)]">✗ Errors: {syncResult.errors}</p>
+                <p className="text-warning-foreground">✗ Errors: {syncResult.errors}</p>
               )}
             </div>
             {syncResult.details.length > 0 && (
               <details className="mt-3">
-                <summary className="cursor-pointer text-sm font-medium text-[var(--primary)] hover:underline">
+                <summary className="cursor-pointer text-sm font-medium text-primary hover:underline">
                   View Details ({syncResult.details.length})
                 </summary>
                 <div className="mt-2 max-h-48 overflow-y-auto space-y-1 text-xs">
                   {syncResult.details.map((detail, idx) => (
-                    <p key={idx} className="text-[var(--foreground-secondary)]">{detail}</p>
+                    <p key={idx} className="text-muted-foreground">{detail}</p>
                   ))}
                 </div>
               </details>
@@ -283,18 +283,18 @@ export function PriceSync({ eventCode, eventName, onSyncComplete }: PriceSyncPro
       {/* Confirmation Modal */}
       {showConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-[var(--background)] rounded-lg shadow-xl max-w-md w-full border border-[var(--border)]">
+          <div className="bg-background rounded-lg shadow-xl max-w-md w-full border border-border">
             <div className="p-6">
-              <h3 className="text-xl font-bold mb-4 text-[var(--foreground)]">
+              <h3 className="text-xl font-bold mb-4 text-foreground">
                 Confirm Commission Sync
               </h3>
-              <div className="space-y-3 text-sm text-[var(--foreground-secondary)]">
+              <div className="space-y-3 text-sm text-muted-foreground">
                 <p>
                   This will update booking commissions from the database for <strong>{eventName}</strong>.
                 </p>
                 <p>
                   {syncAll ? (
-                    <span className="text-[var(--warning)] font-medium">
+                    <span className="text-warning-foreground font-medium">
                       All bookings will be processed.
                     </span>
                   ) : (
@@ -303,7 +303,7 @@ export function PriceSync({ eventCode, eventName, onSyncComplete }: PriceSyncPro
                     </>
                   )}
                 </p>
-                <p className="text-[var(--warning)]">
+                <p className="text-warning-foreground">
                   ⚠️ This action will modify the database. Are you sure?
                 </p>
               </div>

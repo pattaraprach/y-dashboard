@@ -1,0 +1,10 @@
+# Project MCP overrides replace user ~/.grok/config.toml for the same server
+# name entirely (fields are not merged). Authorization must live here or the
+# global PAT is dropped.
+[mcp_servers.reui]
+url = "https://mcp.reui.io/api/mcp"
+enabled = true
+startup_timeout_sec = 60
+
+[mcp_servers.reui.headers]
+Authorization = "Bearer reui_pat_1EEDFXqppagMHlj459sUGr7-_sOlFAGxeUBZ_Va2fhM"

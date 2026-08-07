@@ -13,7 +13,7 @@ export default function Home() {
   return (
     <div className="min-h-screen flex items-center justify-center">
       <div className="text-center">
-        <div className="animate-pulse text-[var(--foreground-secondary)]">
+        <div className="animate-pulse text-muted-foreground">
           Redirecting to dashboard...
         </div>
       </div>

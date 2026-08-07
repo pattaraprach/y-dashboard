@@ -1,8 +1,15 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next'
 
+/**
+ * Next 16.3 Instant Navigations:
+ * - cacheComponents: enables Cache Components / use cache
+ * - partialPrefetching: reusable App Shell prefetch (requires cacheComponents)
+ * @see https://nextjs.org/blog/next-16-3
+ */
 const nextConfig: NextConfig = {
-  /* config options here */
   reactCompiler: true,
-};
+  cacheComponents: true,
+  partialPrefetching: true,
+}
 
-export default nextConfig;
+export default nextConfig

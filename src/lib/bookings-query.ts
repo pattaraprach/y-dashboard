@@ -7,6 +7,7 @@
 export const BOOKING_SELECT = [
   'id',
   'created_at',
+  'order_created_at',
   'woo_id',
   'firstname',
   'lastname',

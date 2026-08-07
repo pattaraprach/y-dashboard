@@ -43,9 +43,9 @@ export function DailyChart({ data, hourlyData, isLoading }: DailyChartProps) {
 
   if (isLoading) {
     return (
-      <div className="glass-card p-6">
-        <div className="h-6 w-48 bg-[var(--background-tertiary)] rounded animate-pulse mb-4" />
-        <div className="h-64 bg-[var(--background-tertiary)] rounded-lg animate-pulse" />
+      <div className="rounded-xl border bg-card p-6 text-card-foreground shadow-sm">
+        <div className="h-6 w-48 bg-muted rounded animate-pulse mb-4" />
+        <div className="h-64 bg-muted rounded-lg animate-pulse" />
       </div>
     )
   }
@@ -76,21 +76,21 @@ export function DailyChart({ data, hourlyData, isLoading }: DailyChartProps) {
   const total    = bars.length
 
   return (
-    <div className="glass-card p-6 flex flex-col">
+    <div className="rounded-xl border bg-card p-6 text-card-foreground shadow-sm flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-lg font-semibold text-[var(--foreground)]">
+        <h3 className="text-lg font-semibold text-foreground">
           Daily Bookings
         </h3>
-        <div className="flex rounded-lg overflow-hidden border border-[var(--border)]">
+        <div className="flex rounded-lg overflow-hidden border border-border">
           {RANGES.map(r => (
             <button
               key={r.value}
               onClick={() => setTimeRange(r.value)}
               className={`px-3 py-1 text-xs font-medium transition-colors ${
                 timeRange === r.value
-                  ? 'bg-[var(--primary)] text-white'
-                  : 'bg-[var(--background-secondary)] text-[var(--foreground-secondary)] hover:bg-[var(--background-tertiary)]'
+                  ? 'bg-primary text-white'
+                  : 'bg-muted text-muted-foreground hover:bg-muted'
               }`}
             >
               {r.label}
@@ -103,14 +103,14 @@ export function DailyChart({ data, hourlyData, isLoading }: DailyChartProps) {
       <div className="flex items-center gap-4 mb-4">
         <div className="flex items-center gap-1.5">
           <div className="w-3 h-3 rounded-sm" style={{ background: 'var(--gradient-primary)' }} />
-          <span className="text-xs text-[var(--foreground-secondary)]">RSH</span>
+          <span className="text-xs text-muted-foreground">RSH</span>
         </div>
         <div className="flex items-center gap-1.5">
           <div className="w-3 h-3 rounded-sm" style={{ background: 'var(--gradient-accent)' }} />
-          <span className="text-xs text-[var(--foreground-secondary)]">Non-RSH</span>
+          <span className="text-xs text-muted-foreground">Non-RSH</span>
         </div>
         {is24h && (
-          <span className="ml-auto text-[10px] text-[var(--foreground-muted)]">
+          <span className="ml-auto text-[10px] text-muted-foreground">
             Rolling 24 hours
           </span>
         )}
@@ -118,7 +118,7 @@ export function DailyChart({ data, hourlyData, isLoading }: DailyChartProps) {
 
       {/* Chart */}
       {bars.length === 0 ? (
-        <p className="text-[var(--foreground-secondary)] text-center py-8">
+        <p className="text-muted-foreground text-center py-8">
           No bookings in this period
         </p>
       ) : (
@@ -136,24 +136,24 @@ export function DailyChart({ data, hourlyData, isLoading }: DailyChartProps) {
               >
                 {/* Tooltip */}
                 <div
-                  className={`opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full mb-2 pointer-events-none z-20 w-40 bg-[var(--background)] border border-[var(--border)] rounded-lg px-3 py-2 shadow-lg ${
+                  className={`opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full mb-2 pointer-events-none z-20 w-40 bg-background border border-border rounded-lg px-3 py-2 shadow-lg ${
                     i < total / 2 ? 'left-0' : 'right-0'
                   }`}
                 >
-                  <p className="text-xs text-[var(--foreground-muted)] mb-1">{bar.xLabel}</p>
-                  <p className="text-sm font-semibold text-[var(--foreground)] mb-1">
+                  <p className="text-xs text-muted-foreground mb-1">{bar.xLabel}</p>
+                  <p className="text-sm font-semibold text-foreground mb-1">
                     {formatNumber(bar.total)} bookings
                   </p>
                   <div className="space-y-1 text-xs">
-                    <div className="flex justify-between text-[var(--primary)]">
+                    <div className="flex justify-between text-primary">
                       <span>RSH:</span>
                       <span>{formatNumber(bar.rsh)}</span>
                     </div>
-                    <div className="flex justify-between text-[var(--accent)]">
+                    <div className="flex justify-between text-foreground">
                       <span>Non-RSH:</span>
                       <span>{formatNumber(bar.nonRsh)}</span>
                     </div>
-                    <div className="pt-1 border-t border-[var(--border-secondary)] text-[var(--foreground-secondary)] flex justify-between">
+                    <div className="pt-1 border-t border-[var(--border-secondary)] text-muted-foreground flex justify-between">
                       <span>Guests:</span>
                       <span>{formatNumber(bar.guests)}</span>
                     </div>
@@ -162,7 +162,7 @@ export function DailyChart({ data, hourlyData, isLoading }: DailyChartProps) {
 
                 {/* Count above bar */}
                 {showCount && (
-                  <span className="text-[10px] text-[var(--foreground-muted)] mb-0.5 leading-none">
+                  <span className="text-[10px] text-muted-foreground mb-0.5 leading-none">
                     {bar.total}
                   </span>
                 )}
@@ -186,7 +186,7 @@ export function DailyChart({ data, hourlyData, isLoading }: DailyChartProps) {
 
                 {/* X-axis label */}
                 <span
-                  className={`text-[9px] text-[var(--foreground-muted)] mt-1 whitespace-nowrap overflow-hidden ${
+                  className={`text-[9px] text-muted-foreground mt-1 whitespace-nowrap overflow-hidden ${
                     showLabel(i, total) ? '' : 'invisible'
                   }`}
                 >

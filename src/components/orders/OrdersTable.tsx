@@ -44,8 +44,9 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
     pageIndex: 0,
     pageSize: 25,
   })
+  // Latest Woo orders first (woo_id). Prefer order_created_at column when sorting by date.
   const [sorting, setSorting] = useState<SortingState>([
-    { id: 'created_at', desc: true },
+    { id: 'woo_id', desc: true },
   ])
 
   // Filter changes should jump back to page 1 without sorting work on a dead page.
@@ -60,6 +61,7 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
       {
         accessorKey: 'woo_id',
         header: 'ID',
+        sortingFn: 'basic',
         cell: ({ row }) => (
           <span className="font-medium tabular-nums">
             #{row.original.woo_id ?? '—'}
@@ -183,11 +185,13 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
         size: 120,
       },
       {
-        accessorKey: 'created_at',
-        header: 'Created',
-        cell: ({ getValue }) => (
+        id: 'order_created_at',
+        header: 'Ordered',
+        accessorFn: (row) => row.order_created_at || row.created_at,
+        sortingFn: 'datetime',
+        cell: ({ row }) => (
           <span className="text-muted-foreground">
-            {formatDate(getValue<string | null>())}
+            {formatDate(row.original.order_created_at || row.original.created_at)}
           </span>
         ),
         size: 120,
