@@ -1,0 +1,61 @@
+scripts/database/restrict-booking-updates.sql
+  s_c7003134e92e30::t_22b757819f89db 11,15-16,28-31,35-36,45-46,64-67
+scripts/database/woocommerce-sync.ts
+  s_8508c3c8712325::t_c68980a564b5e3 256,258,260-262,806-808,814-839,864,867-870,888-889
+src/app/cadcnx/page.tsx
+  s_2881868c9ed9d6::t_2cbeb090f4461c 1,4-9
+src/app/cadnye/page.tsx
+  s_2881868c9ed9d6::t_6e6f8343d2bd69 1,4-9,11
+src/components/Dashboard.tsx
+  s_49a7dddff8fcac::t_817913e3dc5192 225-231,234-235,387
+src/components/dashboard/DailyChart.tsx
+  s_49a7dddff8fcac::t_744bbc8fae2757 55-57
+src/components/dashboard/MetricCard.tsx
+  s_c7003134e92e30::t_7f9288d48ac8d9 41-42,54,58
+src/components/dashboard/MonthlySummary.tsx
+  s_c7003134e92e30::t_48aa3d9c87b333 238-239
+src/components/orders/OrderModal.tsx
+  s_c7003134e92e30::t_a741dc4400a9e6 9,44-46,86-93,95-104,134-138,140-143,145-150,158,169,171-175,351-374
+src/lib/supabase.ts
+  s_c7003134e92e30::t_fe128c43f9c92e 2,4-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "9046177e6bc790e994ea512bacd32ce20cd76eb4",
+  "prompts": {},
+  "sessions": {
+    "s_2881868c9ed9d6": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fda17-9732-7810-bec0-8dee71870256",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    },
+    "s_49a7dddff8fcac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39fc6f04-c105-4237-be48-69ef30219083",
+        "model": "claude-opus-5"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    },
+    "s_8508c3c8712325": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fda29-145a-7310-b025-b08603023c3a",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    },
+    "s_c7003134e92e30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7134d48f-f98e-4d1c-a30e-6f006040250c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
