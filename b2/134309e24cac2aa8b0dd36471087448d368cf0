@@ -1,0 +1,19 @@
+src/components/reui/data-grid/data-grid-table.tsx
+  s_4fc610fc16f0a8::t_d74122bef811bf 1738,1742,2039
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "b2134309e24cac2aa8b0dd36471087448d368cf0",
+  "prompts": {},
+  "sessions": {
+    "s_4fc610fc16f0a8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01820-6c4f-77c0-b998-93edceb961f6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
