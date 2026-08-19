@@ -1735,10 +1735,11 @@ function DataGridTableBodyRows<TData extends object>({
     const centerVisibleColumns = table.getCenterVisibleLeafColumns()
     const rightVisibleColumns = table.getEndVisibleLeafColumns()
     const hasRightPinnedColumns = hasDataGridTableRightPinnedColumns(table)
+    const rowCount = table.getRowModel().rows.length || pagination.pageSize
 
     return (
       <>
-        {Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
+        {Array.from({ length: rowCount }).map((_, rowIndex) => (
           <DataGridTableBodyRowSkeleton key={rowIndex}>
             {[...leftVisibleColumns, ...centerVisibleColumns].map((column) => (
               <DataGridTableBodyRowSkeletonCell column={column} key={column.id}>
