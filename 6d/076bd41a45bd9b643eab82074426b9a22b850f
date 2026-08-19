@@ -1,0 +1,109 @@
+src/app/cadcnx/page.tsx
+  s_4fc610fc16f0a8::t_0c23d30f37b596 2-5,7,15-21,27
+  s_4fc610fc16f0a8::t_ae84f79770905c 22-26,28-29
+supabase/migrations/20260819090000_dashboard_realtime_and_queries.sql
+  s_4fc610fc16f0a8::t_540093c91985ec 1-62,74-83,85-91,94-95,97-121,123-131,133-299,301-308,310-352,355-370
+  s_4fc610fc16f0a8::t_a20d74e1d37a85 63-73,84,93,353-354
+  s_4fc610fc16f0a8::t_2d3622a7f10878 92,96,122,132,300,309
+src/lib/dashboard-booking-patch.ts
+  s_4fc610fc16f0a8::t_ae84f79770905c 1-39
+src/app/cadnye/page.tsx
+  s_4fc610fc16f0a8::t_0c23d30f37b596 2-5,7,15-21,27
+  s_4fc610fc16f0a8::t_ae84f79770905c 22-26,28-30
+src/lib/build-dashboard-snapshot.ts
+  s_4fc610fc16f0a8::t_864e7721505e42 24-25,30,36-43,47
+src/lib/get-dashboard-snapshot.ts
+  s_4fc610fc16f0a8::t_34d18cf1964851 10
+src/components/orders/OrderModal.tsx
+  s_4fc610fc16f0a8::t_9cf44a5ac0fb39 47-49,98,168,261-275
+  s_4fc610fc16f0a8::t_ae84f79770905c 17-21,41,45,107
+  s_d66074fb1362b1::t_225f8f06b4b19b 276
+src/app/actions/bookings.ts
+  s_4fc610fc16f0a8::t_9cf44a5ac0fb39 29,43-46,51,75
+  s_4fc610fc16f0a8::t_ae84f79770905c 3-4,6,33-35,68-74,77-81,104,139,170-171
+  s_4fc610fc16f0a8::t_efd39661db2f18 52,58,76
+  s_63a29ccd425d8e::t_d8057b0a424696 172
+supabase/migrations/20260819133000_fix_dashboard_summary_and_export.sql
+  s_4fc610fc16f0a8::t_a20d74e1d37a85 1-32
+src/components/reui/data-grid/data-grid.tsx
+  s_4fc610fc16f0a8::t_ea84049915cb41 431,556
+src/lib/dashboard-booking-patch.test.ts
+  s_4fc610fc16f0a8::t_923b718657ef8b 1-9,11-14,16-25,28-34,37-49,52-60
+  s_4fc610fc16f0a8::t_aa3da5bf4a8ec0 15
+  s_4fc610fc16f0a8::t_9cf44a5ac0fb39 26,35,50
+  s_4fc610fc16f0a8::t_fd1849b303a718 10,27,36,51
+src/types/database.ts
+  s_4fc610fc16f0a8::t_efd39661db2f18 139
+  s_4fc610fc16f0a8::t_ae84f79770905c 137-138,140-141
+  s_4fc610fc16f0a8::t_9cf44a5ac0fb39 150,167
+src/lib/bookings-query.ts
+  s_4fc610fc16f0a8::t_89551fb43420cf 6,8-9,11-18,20-33
+  s_4fc610fc16f0a8::t_efd39661db2f18 35
+  s_63a29ccd425d8e::t_0b2000887c59a0 34
+src/components/Dashboard.tsx
+  s_4fc610fc16f0a8::t_4205d5e10a9509 14,209-217,258,267,273,275,284,298-300,305,314-318,321-327,334,356,360,440-453
+  s_4fc610fc16f0a8::t_c405e7f13ab349 4-13,20-23,50,53,59,118,133,135,143-145,149,157-161,168,174-176
+  s_4fc610fc16f0a8::t_43adee52298559 245
+  s_4fc610fc16f0a8::t_05fbf128310742 182-203,208,218-232,234-244,246-251,257,259-260,274,276-277,301-302,341-345
+  s_4fc610fc16f0a8::t_a20d74e1d37a85 256,351
+  s_4fc610fc16f0a8::t_d4bf21eee20fa9 147,233,722
+  s_4fc610fc16f0a8::t_f148e839e9680f 347-350,357
+  s_4fc610fc16f0a8::t_c1c48bb60f1354 359,372-380,383,390,395-409,412-432,437-438,459-460
+  s_4fc610fc16f0a8::t_3ff35be95e2885 489,620,627-628,636-637,657-660,678-681,692-695,717-720
+  s_4fc610fc16f0a8::t_ab2fbe380d594b 204-207
+  s_4fc610fc16f0a8::t_402a2ec5cc37d9 152
+  s_4fc610fc16f0a8::t_dec2058b555480 24,287-297,303-304,306-308,310,312-313,319,329-333,336-340,353-355,358
+  s_4fc610fc16f0a8::t_ae84f79770905c 19,45,58,114-117,119-132,134,137-142,146,362-369,730
+  s_82d0c7f7880a37::t_8310ecf189a204 177-178
+src/lib/utils.export.test.ts
+  s_4fc610fc16f0a8::t_a7771848fbcc4a 61,71-73,122,141-143,145-146,149
+  s_4fc610fc16f0a8::t_1224e8c6c85635 144,147
+src/components/orders/OrdersTable.tsx
+  s_4fc610fc16f0a8::t_5f5c42af6923da 3,6,26-28,41-48,218-222,229
+src/lib/utils.ts
+  s_4fc610fc16f0a8::t_9cf44a5ac0fb39 91,113,146-150,179,191
+src/app/actions/dashboard.ts
+  s_4fc610fc16f0a8::t_3ea82e7c566d5c 11-16,18,28,34-74,111,124-139,147,165,168-173,178
+  s_4fc610fc16f0a8::t_bbfa70c8ad0922 150-164,166-167
+  s_4fc610fc16f0a8::t_efd39661db2f18 112-123,140-146,148-149,174-177
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "6d076bd41a45bd9b643eab82074426b9a22b850f",
+  "prompts": {},
+  "sessions": {
+    "s_4fc610fc16f0a8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01820-6c4f-77c0-b998-93edceb961f6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    },
+    "s_63a29ccd425d8e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a018af-21b2-7d23-89a9-c060a1b024ef",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    },
+    "s_82d0c7f7880a37": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66684450-7daa-48ae-9e93-bf3497b04583",
+        "model": "claude-opus-5"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    },
+    "s_d66074fb1362b1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0182c-1e01-7660-9f61-7087913931b8",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
