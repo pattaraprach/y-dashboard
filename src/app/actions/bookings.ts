@@ -1,6 +1,9 @@
 'use server'
 
+import { updateTag } from 'next/cache'
+import { dashboardCacheTag } from '@/lib/build-dashboard-snapshot'
 import { createSupabaseServerClient } from '@/lib/supabase-server'
+import type { BookingOpsPatch } from '@/types/database'
 
 async function requireAuthenticatedUser() {
   const supabase = await createSupabaseServerClient()
@@ -23,10 +26,13 @@ function actionError(err: unknown, fallback: string): string {
  */
 export async function updateBookingOpsFields(input: {
   bookingId: number
+  phoneRaw: string
   seat: string
   pickupLoc: string
   childCount: number
-}): Promise<{ ok: true } | { ok: false; error: string }> {
+}): Promise<
+  { ok: true; booking: BookingOpsPatch } | { ok: false; error: string }
+> {
   try {
     const supabase = await requireAuthenticatedUser()
 
@@ -34,16 +40,22 @@ export async function updateBookingOpsFields(input: {
       0,
       Math.min(50, Math.floor(Number(input.childCount) || 0))
     )
+    if (typeof input.phoneRaw !== 'string' || input.phoneRaw.trim().length > 64) {
+      return { ok: false, error: 'Invalid phone number.' }
+    }
+    const phoneRaw = input.phoneRaw.trim() || null
 
     const { data, error } = await supabase
       .from('cad_yip_bookings')
       .update({
+        phone_raw: phoneRaw,
+        phone_e164: null,
         seat: input.seat,
         pickup_loc: input.pickupLoc,
         child_count: childCount,
       })
       .eq('id', input.bookingId)
-      .select('id')
+      .select('id, sku, phone_raw, phone_e164, seat, pickup_loc, child_count')
       .maybeSingle()
 
     if (error) {
@@ -53,7 +65,20 @@ export async function updateBookingOpsFields(input: {
     if (!data) {
       return { ok: false, error: 'Booking not found.' }
     }
-    return { ok: true }
+    if (data.sku?.includes('CADCNX')) updateTag(dashboardCacheTag('CADCNX'))
+    if (data.sku?.includes('CADNYE')) updateTag(dashboardCacheTag('CADNYE'))
+
+    return {
+      ok: true,
+      booking: {
+        id: data.id,
+        phone_raw: data.phone_raw,
+        phone_e164: data.phone_e164,
+        seat: data.seat,
+        pickup_loc: data.pickup_loc,
+        child_count: data.child_count,
+      },
+    }
   } catch (err) {
     return { ok: false, error: actionError(err, 'Failed to save changes.') }
   }
@@ -76,7 +101,7 @@ export async function setBookingCancelled(input: {
 
     const { data: row, error: readError } = await supabase
       .from('cad_yip_bookings')
-      .select('id, is_cancelled, refund_status')
+      .select('id, sku, is_cancelled, refund_status')
       .eq('id', input.bookingId)
       .single()
 
@@ -111,7 +136,7 @@ export async function setBookingCancelled(input: {
       .from('cad_yip_bookings')
       .update(payload)
       .eq('id', input.bookingId)
-      .select('id, is_cancelled, refund_status')
+      .select('id, sku, is_cancelled, refund_status')
       .maybeSingle()
 
     if (error) {
@@ -141,6 +166,9 @@ export async function setBookingCancelled(input: {
         error: 'This booking still has Woo refund evidence and stays cancelled.',
       }
     }
+
+    if (updated.sku?.includes('CADCNX')) updateTag(dashboardCacheTag('CADCNX'))
+    if (updated.sku?.includes('CADNYE')) updateTag(dashboardCacheTag('CADNYE'))
 
     return { ok: true, is_cancelled: updated.is_cancelled }
   } catch (err) {

@@ -3,44 +3,33 @@
  * Keep selects lean and always filter event code on the server.
  */
 
-/** Columns needed for metrics, table, export, and order modal shell. */
-export const BOOKING_SELECT = [
-  'id',
-  'created_at',
-  'order_created_at',
-  'woo_id',
-  'firstname',
-  'lastname',
-  'email',
-  'phone_e164',
-  'country',
-  'sku',
-  'seat',
-  'is_rsh_transfer',
-  'pickup_loc',
-  'child_count',
-  'amount',
-  'commission',
-  'fees',
-  'event_date',
-  'zone_code',
-  'zone',
-  'event_type',
-  'is_cancelled',
-  'amount_refunded',
-  'amount_net',
-  'woo_status',
-  'refund_status',
-  'cancel_source',
-  'cancelled_at',
-  'refunded_at',
-  'last_synced_at',
-  'cad_yip_attendees(id, attendee_firstname, attendee_lastname)',
-].join(',')
+import type { BookingWithAttendees } from '@/types/database'
 
-export const BOOKING_PAGE_SIZE = 500
+export type BookingStatusFilter = 'active' | 'cancelled' | 'all'
+export type BookingRshFilter = 'all' | 'rsh' | 'non-rsh'
 
-/** PostgREST ilike pattern: SKU contains event code (CADCNX / CADNYE). */
-export function eventSkuFilter(eventCode: string): string {
-  return `%${eventCode}%`
+export interface DashboardBookingQuery {
+  eventCode: 'CADCNX' | 'CADNYE'
+  pageIndex: number
+  pageSize: number
+  status: BookingStatusFilter
+  rsh: BookingRshFilter
+  eventDate: string
+  search: string
 }
+
+export interface DashboardBookingPage {
+  bookings: BookingWithAttendees[]
+  total: number
+}
+
+export const DEFAULT_BOOKING_QUERY = {
+  pageIndex: 0,
+  pageSize: 25,
+  status: 'active',
+  rsh: 'all',
+  eventDate: '',
+  search: '',
+} as const
+
+export const BOOKING_EXPORT_PAGE_SIZE = 10_000

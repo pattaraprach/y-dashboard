@@ -14,7 +14,11 @@ import {
   formatCustomerName,
   formatDate,
 } from '@/lib/utils'
-import type { Attendee, BookingWithAttendees } from '@/types/database'
+import type {
+  Attendee,
+  BookingOpsPatch,
+  BookingWithAttendees,
+} from '@/types/database'
 import { Badge } from '@/components/reui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -34,11 +38,15 @@ import { Spinner } from '@/components/ui/spinner'
 interface OrderModalProps {
   booking: BookingWithAttendees | null
   onClose: () => void
+  onSave: (booking: BookingOpsPatch) => void
   onUpdate: () => void
 }
 
-export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
+export function OrderModal({ booking, onClose, onSave, onUpdate }: OrderModalProps) {
   // Parent remounts via `key={booking.id}` so local state can init from props.
+  const [phoneRaw, setPhoneRaw] = useState(
+    booking?.phone_raw || booking?.phone_e164 || ''
+  )
   const [seat, setSeat] = useState(booking?.seat || '')
   const [pickupLoc, setPickupLoc] = useState(booking?.pickup_loc || '')
   const [childCount, setChildCount] = useState(
@@ -87,6 +95,7 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
       // Allowlisted server action — never open-ended client column updates.
       const result = await updateBookingOpsFields({
         bookingId: booking.id,
+        phoneRaw,
         seat,
         pickupLoc,
         childCount: booking.is_rsh_transfer ? childCount : 0,
@@ -95,7 +104,7 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
       if (!result.ok) {
         setError(result.error || 'Failed to save changes. Please try again.')
       } else {
-        onUpdate()
+        onSave(result.booking)
         onClose()
       }
     } catch {
@@ -156,6 +165,7 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
     const withAttendees: BookingWithAttendees = {
       ...booking,
       is_cancelled: isCancelled,
+      phone_raw: phoneRaw,
       cad_yip_attendees:
         attendees.length > 0
           ? attendees.map((a) => ({
@@ -248,12 +258,22 @@ export function OrderModal({ booking, onClose, onUpdate }: OrderModalProps) {
                     <dt className="text-muted-foreground">Email</dt>
                     <dd className="text-right break-all">{booking.email || '—'}</dd>
                   </div>
-                  {booking.phone_e164 ? (
-                    <div className="flex justify-between gap-4">
-                      <dt className="text-muted-foreground">Phone</dt>
-                      <dd>{booking.phone_e164}</dd>
-                    </div>
-                  ) : null}
+                  <div className="flex items-center justify-between gap-4">
+                    <dt>
+                      <Label htmlFor="phone">Phone</Label>
+                    </dt>
+                    <dd>
+                      <Input
+                        id="phone"
+                        type="tel"
+                        value={phoneRaw}
+                        maxLength={64}
+                        onChange={(event) => setPhoneRaw(event.target.value)}
+                        placeholder="Phone number"
+                        className="h-8 max-w-52"
+                      />
+                    </dd>
+                  </div>
                 </dl>
               </section>
 

@@ -1,10 +1,10 @@
 'use client'
 
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useMemo } from 'react'
 import {
   type ColumnDef,
+  type OnChangeFn,
   type PaginationState,
-  type SortingState,
   sortFn_datetime,
   useTable,
 } from '@tanstack/react-table'
@@ -23,6 +23,9 @@ import type { Booking } from '@/types/database'
 
 interface OrdersTableProps {
   bookings: Booking[]
+  totalCount: number
+  pagination: PaginationState
+  onPaginationChange: OnChangeFn<PaginationState>
   onRowClick: (booking: Booking) => void
   isLoading?: boolean
 }
@@ -35,26 +38,14 @@ const TABLE_LAYOUT = {
   columnsResizable: false,
 }
 
-function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps) {
-  const [pagination, setPagination] = useState<PaginationState>({
-    pageIndex: 0,
-    pageSize: 25,
-  })
-  // Latest Woo orders first (woo_id). Prefer order_created_at column when sorting by date.
-  const [sorting, setSorting] = useState<SortingState>([
-    { id: 'woo_id', desc: true },
-  ])
-
-  // Filter changes should jump back to page 1 without sorting work on a dead page.
-  // Defer so setState is not synchronous in the effect body (react-hooks/set-state-in-effect).
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setPagination((prev) =>
-        prev.pageIndex === 0 ? prev : { ...prev, pageIndex: 0 }
-      )
-    }, 0)
-    return () => clearTimeout(timer)
-  }, [bookings])
+function OrdersTableInner({
+  bookings,
+  totalCount,
+  pagination,
+  onPaginationChange,
+  onRowClick,
+  isLoading,
+}: OrdersTableProps) {
 
   const columns = useMemo<ColumnDef<DataGridFeatures, Booking>[]>(
     () => [
@@ -224,17 +215,18 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
     columns,
     // Stable row identity keeps selection/pinning/memoization correct under v9's new wrappers.
     getRowId: (row) => String(row.id),
-    state: { pagination, sorting },
-    onPaginationChange: setPagination,
-    onSortingChange: setSorting,
-    // Avoid auto-reset thrash when parent rebuilds the filtered array identity.
+    state: { pagination },
+    onPaginationChange,
+    manualPagination: true,
+    rowCount: totalCount,
+    enableSorting: false,
     autoResetPageIndex: false,
   })
 
   return (
     <DataGrid
       table={table}
-      recordCount={bookings.length}
+      recordCount={totalCount}
       isLoading={isLoading}
       loadingMode="skeleton"
       emptyMessage="No orders found"

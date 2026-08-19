@@ -7,7 +7,7 @@ import {
 } from '@/lib/build-dashboard-snapshot'
 
 /**
- * Shared server cache of the full event dashboard snapshot.
+ * Shared server cache of the compact aggregate dashboard summary.
  * Soft TTL via "hours" profile; Resync uses updateTag + fresh build.
  */
 export async function getCachedDashboardSnapshot(
