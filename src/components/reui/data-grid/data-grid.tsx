@@ -428,6 +428,7 @@ function DataGridProvider<TData extends object>({
       props.isLoading,
       props.loadingMode,
       props.className,
+      table.options.data,
       // eslint-disable-next-line react-hooks/exhaustive-deps
       JSON.stringify(props.tableLayout),
       // eslint-disable-next-line react-hooks/exhaustive-deps
