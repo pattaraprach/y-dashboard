@@ -17,6 +17,7 @@ import {
 import { DataGridPagination } from '@/components/reui/data-grid/data-grid-pagination'
 import { DataGridTable } from '@/components/reui/data-grid/data-grid-table'
 import { Badge } from '@/components/reui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
 import { getChildCount } from '@/lib/child-count'
 import { formatCurrency, formatCustomerName, formatDate } from '@/lib/utils'
 import type { Booking } from '@/types/database'
@@ -37,6 +38,8 @@ const TABLE_LAYOUT = {
   width: 'auto' as const,
   columnsResizable: false,
 }
+
+const CELL_SKELETON = <Skeleton className="h-5 w-full max-w-24" />
 
 function OrdersTableInner({
   bookings,
@@ -111,6 +114,7 @@ function OrdersTableInner({
         meta: {
           headerClassName: 'text-right',
           cellClassName: 'text-right',
+          skeleton: CELL_SKELETON,
         },
       },
       {
@@ -213,6 +217,7 @@ function OrdersTableInner({
     features: dataGridFeatures,
     data: bookings,
     columns,
+    defaultColumn: { meta: { skeleton: CELL_SKELETON } },
     // Stable row identity keeps selection/pinning/memoization correct under v9's new wrappers.
     getRowId: (row) => String(row.id),
     state: { pagination },
