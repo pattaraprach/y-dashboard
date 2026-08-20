@@ -1,0 +1,19 @@
+src/app/actions/dashboard.ts
+  s_4fc610fc16f0a8::t_3095fda606e902 198,200-208
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "c8d68a7da2a6d44353db3623854b0f5dc23c1f1a",
+  "prompts": {},
+  "sessions": {
+    "s_4fc610fc16f0a8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01820-6c4f-77c0-b998-93edceb961f6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
