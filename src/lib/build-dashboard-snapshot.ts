@@ -23,6 +23,10 @@ export interface DashboardSnapshot {
 
 type DashboardSummaryRow = Omit<DashboardSnapshot, 'eventCode'>
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 export function dashboardCacheTag(eventCode: EventCode): string {
   return `dashboard:${eventCode}`
 }
@@ -38,7 +42,16 @@ export async function buildDashboardSnapshot(
   })
 
   if (error) throw error
-  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+  if (
+    !isRecord(data) ||
+    typeof data.generatedAt !== 'string' ||
+    !isRecord(data.metrics) ||
+    !Array.isArray(data.availableEventDates) ||
+    !Array.isArray(data.eventMetrics) ||
+    !Array.isArray(data.dailyMetrics) ||
+    !Array.isArray(data.hourlyMetrics) ||
+    !Array.isArray(data.monthlySummary)
+  ) {
     throw new Error('Dashboard summary query returned invalid data.')
   }
 

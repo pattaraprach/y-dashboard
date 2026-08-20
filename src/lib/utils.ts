@@ -1,6 +1,7 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import { formatChildCountSuffix, getChildCount } from '@/lib/child-count'
+import { ASIA_BANGKOK_TIME_ZONE } from '@/lib/timezone'
 import type {
     BookingExportRow,
     BookingWithAttendees,
@@ -26,6 +27,7 @@ export function formatDate(dateString: string | null): string {
         day: '2-digit',
         month: 'short',
         year: 'numeric',
+        timeZone: ASIA_BANGKOK_TIME_ZONE,
     })
 }
 
@@ -88,7 +90,7 @@ function buildExportParties(
 
         parties.push({
             orderId: booking.woo_id ?? null,
-            phone: (booking.phone_raw || booking.phone_e164 || '').trim(),
+            phone: booking.phone_raw?.trim() || booking.phone_e164?.trim() || '',
             seat,
             pickup,
             eventDate: booking.event_date ?? null,

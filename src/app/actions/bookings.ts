@@ -20,8 +20,13 @@ function actionError(err: unknown, fallback: string): string {
   return fallback
 }
 
+function invalidateDashboardCache(sku: string | null | undefined) {
+  if (sku?.includes('CADCNX')) updateTag(dashboardCacheTag('CADCNX'))
+  if (sku?.includes('CADNYE')) updateTag(dashboardCacheTag('CADNYE'))
+}
+
 /**
- * Allowlisted seat/pickup/child_count update only — never open-ended column updates.
+ * Allowlisted phone/seat/pickup/child_count update only — never open-ended column updates.
  * child_count is for RSH pickup capacity (children free on ticket).
  */
 export async function updateBookingOpsFields(input: {
@@ -65,8 +70,7 @@ export async function updateBookingOpsFields(input: {
     if (!data) {
       return { ok: false, error: 'Booking not found.' }
     }
-    if (data.sku?.includes('CADCNX')) updateTag(dashboardCacheTag('CADCNX'))
-    if (data.sku?.includes('CADNYE')) updateTag(dashboardCacheTag('CADNYE'))
+    invalidateDashboardCache(data.sku)
 
     return {
       ok: true,
@@ -161,14 +165,14 @@ export async function setBookingCancelled(input: {
           cancelled_at: new Date().toISOString(),
         })
         .eq('id', input.bookingId)
+      invalidateDashboardCache(updated.sku)
       return {
         ok: false,
         error: 'This booking still has Woo refund evidence and stays cancelled.',
       }
     }
 
-    if (updated.sku?.includes('CADCNX')) updateTag(dashboardCacheTag('CADCNX'))
-    if (updated.sku?.includes('CADNYE')) updateTag(dashboardCacheTag('CADNYE'))
+    invalidateDashboardCache(updated.sku)
 
     return { ok: true, is_cancelled: updated.is_cancelled }
   } catch (err) {

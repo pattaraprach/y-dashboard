@@ -9,8 +9,8 @@ import {
   type ReactNode,
 } from 'react'
 import {
+  loadDashboardBookingExport,
   loadDashboardBookingsPage,
-  loadDashboardExportBookings,
   loadFreshDashboardSnapshot,
   loadDashboardSnapshot,
   resyncDashboardSnapshot,
@@ -20,11 +20,14 @@ import { applyBookingOpsPatch } from '@/lib/dashboard-booking-patch'
 import type {
   DashboardBookingPage,
   DashboardBookingQuery,
+  DashboardBookingSortColumn,
 } from '@/lib/bookings-query'
 import { getSupabaseBrowserClient } from '@/lib/supabase'
 import {
-  buildBookingExportCsv,
-  buildGroupedExportText,
+  ASIA_BANGKOK_TIME_ZONE,
+  BANGKOK_DATE_STAMP_FORMATTER,
+} from '@/lib/timezone'
+import {
   cn,
   downloadCsv,
   formatCurrency,
@@ -43,14 +46,13 @@ import { Spinner } from '@/components/ui/spinner'
 import type {
   BookingWithAttendees,
   BookingOpsPatch,
-  DashboardMetrics,
   EventMetrics,
   DailyMetrics,
   MonthlySummary as MonthlySummaryType,
   HourlyMetrics,
 } from '@/types/database'
 import { RefreshCwIcon, SearchIcon, XIcon } from 'lucide-react'
-import type { PaginationState } from '@tanstack/react-table'
+import type { PaginationState, SortingState } from '@tanstack/react-table'
 
 interface DashboardProps {
   eventCode: 'CADCNX' | 'CADNYE'
@@ -110,6 +112,7 @@ const RSHIcon = () => (
 
 type RshFilter = 'all' | 'rsh' | 'non-rsh'
 type StatusFilter = 'active' | 'cancelled' | 'all'
+const DEFAULT_BOOKING_SORTING: SortingState = [{ id: 'woo_id', desc: true }]
 
 export default function Dashboard({
   eventCode,
@@ -117,9 +120,11 @@ export default function Dashboard({
   initialSnapshot,
   initialBookingPage,
 }: DashboardProps) {
-  const [metrics, setMetrics] = useState<DashboardMetrics | null>(
-    initialSnapshot.metrics
-  )
+  const [bookingView, setBookingView] = useState(() => ({
+    bookings: initialBookingPage.bookings,
+    metrics: initialSnapshot.metrics,
+  }))
+  const { bookings: allBookings, metrics } = bookingView
   const [eventMetrics, setEventMetrics] = useState<EventMetrics[]>(
     initialSnapshot.eventMetrics
   )
@@ -128,9 +133,6 @@ export default function Dashboard({
   )
   const [monthlySummary, setMonthlySummary] = useState<MonthlySummaryType[]>(
     initialSnapshot.monthlySummary
-  )
-  const [allBookings, setAllBookings] = useState<BookingWithAttendees[]>(
-    initialBookingPage.bookings
   )
   const [bookingTotal, setBookingTotal] = useState(initialBookingPage.total)
   const [selectedBooking, setSelectedBooking] = useState<BookingWithAttendees | null>(null)
@@ -159,9 +161,11 @@ export default function Dashboard({
     pageIndex: 0,
     pageSize: 25,
   })
+  const [sorting, setSorting] = useState<SortingState>(DEFAULT_BOOKING_SORTING)
+  const snapshotRequestId = useRef(0)
 
   const applySnapshot = useCallback((snapshot: DashboardSnapshot) => {
-    setMetrics(snapshot.metrics)
+    setBookingView((current) => ({ ...current, metrics: snapshot.metrics }))
     setEventMetrics(snapshot.eventMetrics)
     setDailyMetrics(snapshot.dailyMetrics)
     setMonthlySummary(snapshot.monthlySummary)
@@ -172,8 +176,13 @@ export default function Dashboard({
   }, [])
 
   const applyBookingPage = useCallback((page: DashboardBookingPage) => {
-    setAllBookings(page.bookings)
+    setBookingView((current) => ({ ...current, bookings: page.bookings }))
     setBookingTotal(page.total)
+    setPagination((current) =>
+      current.pageIndex === page.pageIndex
+        ? current
+        : { ...current, pageIndex: page.pageIndex }
+    )
   }, [])
 
   const errorMessage = (error: unknown, fallback: string) =>
@@ -188,6 +197,8 @@ export default function Dashboard({
       rsh: rshFilter,
       eventDate: eventDateFilter,
       search: debouncedSearch,
+      sortColumn: (sorting[0]?.id ?? 'woo_id') as DashboardBookingSortColumn,
+      sortDesc: sorting[0]?.desc ?? true,
     }),
     [
       eventCode,
@@ -197,20 +208,32 @@ export default function Dashboard({
       rshFilter,
       eventDateFilter,
       debouncedSearch,
+      sorting,
     ]
   )
   const bookingQueryRef = useRef(bookingQuery)
   const loadedQueryKey = useRef(JSON.stringify(bookingQuery))
+  const bookingPageRequestId = useRef(0)
 
   useEffect(() => {
     bookingQueryRef.current = bookingQuery
   }, [bookingQuery])
 
   const loadCurrentBookingPage = useCallback(async () => {
+    const requestId = ++bookingPageRequestId.current
     const query = bookingQueryRef.current
     const queryKey = JSON.stringify(query)
-    const page = await loadDashboardBookingsPage(query)
-    if (queryKey === JSON.stringify(bookingQueryRef.current)) {
+    let page: DashboardBookingPage
+    try {
+      page = await loadDashboardBookingsPage(query)
+    } catch (error) {
+      if (requestId === bookingPageRequestId.current) throw error
+      return
+    }
+    if (
+      requestId === bookingPageRequestId.current &&
+      queryKey === JSON.stringify(bookingQueryRef.current)
+    ) {
       applyBookingPage(page)
     }
   }, [applyBookingPage])
@@ -229,14 +252,17 @@ export default function Dashboard({
     const queryKey = JSON.stringify(bookingQuery)
     if (queryKey === loadedQueryKey.current) return
     loadedQueryKey.current = queryKey
+    const requestId = ++bookingPageRequestId.current
     let cancelled = false
     setIsBookingsLoading(true)
     void loadDashboardBookingsPage(bookingQuery)
       .then((page) => {
-        if (!cancelled) applyBookingPage(page)
+        if (!cancelled && requestId === bookingPageRequestId.current) {
+          applyBookingPage(page)
+        }
       })
       .catch((error) => {
-        if (!cancelled) {
+        if (!cancelled && requestId === bookingPageRequestId.current) {
           console.error('Error loading booking page:', error)
           setLoadError(errorMessage(error, 'Failed to load orders'))
         }
@@ -250,6 +276,7 @@ export default function Dashboard({
   }, [bookingQuery, applyBookingPage])
 
   const loadFromCache = useCallback(async () => {
+    const requestId = ++snapshotRequestId.current
     setIsLoading(true)
     setLoadError(null)
     try {
@@ -257,16 +284,19 @@ export default function Dashboard({
         loadDashboardSnapshot(eventCode),
         loadCurrentBookingPage(),
       ])
-      applySnapshot(snapshot)
+      if (requestId === snapshotRequestId.current) applySnapshot(snapshot)
     } catch (error) {
-      console.error('Error loading dashboard snapshot:', error)
-      setLoadError(errorMessage(error, 'Failed to load dashboard data'))
+      if (requestId === snapshotRequestId.current) {
+        console.error('Error loading dashboard snapshot:', error)
+        setLoadError(errorMessage(error, 'Failed to load dashboard data'))
+      }
     } finally {
       setIsLoading(false)
     }
   }, [eventCode, applySnapshot, loadCurrentBookingPage])
 
   const handleResync = useCallback(async () => {
+    const requestId = ++snapshotRequestId.current
     setIsResyncing(true)
     setLoadError(null)
     try {
@@ -274,10 +304,12 @@ export default function Dashboard({
         resyncDashboardSnapshot(eventCode),
         loadCurrentBookingPage(),
       ])
-      applySnapshot(snapshot)
+      if (requestId === snapshotRequestId.current) applySnapshot(snapshot)
     } catch (error) {
-      console.error('Error resyncing dashboard:', error)
-      setLoadError(errorMessage(error, 'Failed to resync dashboard'))
+      if (requestId === snapshotRequestId.current) {
+        console.error('Error resyncing dashboard:', error)
+        setLoadError(errorMessage(error, 'Failed to resync dashboard'))
+      }
     } finally {
       setIsResyncing(false)
     }
@@ -292,6 +324,7 @@ export default function Dashboard({
 
     const refresh = async () => {
       if (stopped || refreshing || !pending) return
+      const requestId = ++snapshotRequestId.current
       pending = false
       refreshing = true
       try {
@@ -299,10 +332,12 @@ export default function Dashboard({
           loadFreshDashboardSnapshot(eventCode),
           loadCurrentBookingPage(),
         ])
-        applySnapshot(snapshot)
+        if (requestId === snapshotRequestId.current) applySnapshot(snapshot)
       } catch (error) {
-        console.error('Error refreshing realtime dashboard data:', error)
-        setLoadError(errorMessage(error, 'Failed to refresh dashboard data'))
+        if (requestId === snapshotRequestId.current) {
+          console.error('Error refreshing realtime dashboard data:', error)
+          setLoadError(errorMessage(error, 'Failed to refresh dashboard data'))
+        }
       } finally {
         refreshing = false
         if (pending && !stopped) scheduleRefresh()
@@ -318,20 +353,32 @@ export default function Dashboard({
       }, 750)
     }
 
-    const scheduleBookingRefresh = (payload: {
-      new?: Record<string, unknown>
-      old?: Record<string, unknown>
-    }) => {
-      const sku = payload.new?.sku ?? payload.old?.sku
-      if (typeof sku !== 'string' || sku.includes(eventCode)) scheduleRefresh()
-    }
-
     const channel = supabase
       .channel(`dashboard:${eventCode}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'cad_yip_bookings' },
-        scheduleBookingRefresh
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'cad_yip_bookings',
+          filter: `sku=ilike.%${eventCode}%`,
+        },
+        scheduleRefresh
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'cad_yip_bookings',
+          filter: `sku=ilike.%${eventCode}%`,
+        },
+        scheduleRefresh
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'cad_yip_bookings' },
+        scheduleRefresh
       )
       .on(
         'postgres_changes',
@@ -361,11 +408,20 @@ export default function Dashboard({
 
   const handleBookingSave = useCallback(
     (patch: BookingOpsPatch) => {
-      const updated = applyBookingOpsPatch(allBookings, metrics, patch)
-      setAllBookings(updated.bookings)
-      setMetrics(updated.metrics)
+      setBookingView((current) => {
+        const updated = applyBookingOpsPatch(
+          current.bookings,
+          current.metrics,
+          patch
+        )
+        return { ...updated, metrics: updated.metrics ?? current.metrics }
+      })
+      void loadCurrentBookingPage().catch((error) => {
+        console.error('Error reloading booking page:', error)
+        setLoadError(errorMessage(error, 'Failed to reload orders'))
+      })
     },
-    [allBookings, metrics]
+    [loadCurrentBookingPage]
   )
 
   const hourlyMetrics = useMemo(
@@ -375,6 +431,7 @@ export default function Dashboard({
         label: new Date(Number(metric.slotKey)).toLocaleTimeString('en-GB', {
           hour: '2-digit',
           minute: '2-digit',
+          timeZone: ASIA_BANGKOK_TIME_ZONE,
         }),
       })),
     [hourlySnapshot]
@@ -390,20 +447,21 @@ export default function Dashboard({
     setPagination((current) => ({ ...current, pageIndex: 0 }))
   }
 
-  const exportStamp = () => new Date().toISOString().slice(0, 10)
+  const exportStamp = () =>
+    BANGKOK_DATE_STAMP_FORMATTER.format(new Date()).replaceAll('/', '-')
 
   const handleExport = async () => {
     if (totalCount === 0 || isExporting) return
     setIsExporting(true)
     try {
-      const bookings = await loadDashboardExportBookings(bookingQuery)
+      const csv = await loadDashboardBookingExport(bookingQuery, 'csv')
       downloadCsv(
         `${eventCode.toLowerCase()}-bookings-${exportStamp()}.csv`,
-        buildBookingExportCsv(bookings)
+        csv
       )
     } catch (error) {
       console.error('Export failed:', error)
-      window.alert('Could not export bookings. Please try again.')
+      window.alert(errorMessage(error, 'Could not export bookings. Please try again.'))
     } finally {
       setIsExporting(false)
     }
@@ -413,21 +471,21 @@ export default function Dashboard({
     if (isExporting) return
     setIsExporting(true)
     try {
-      const bookings = await loadDashboardExportBookings({
+      const csv = await loadDashboardBookingExport({
         ...bookingQuery,
         rsh: 'rsh',
-      })
-      if (bookings.length === 0) {
+      }, 'csv')
+      if (!csv.includes('\n')) {
         window.alert('No RSH transfer bookings match the current filters.')
         return
       }
       downloadCsv(
         `${eventCode.toLowerCase()}-rsh-${exportStamp()}.csv`,
-        buildBookingExportCsv(bookings)
+        csv
       )
     } catch (error) {
       console.error('RSH export failed:', error)
-      window.alert('Could not export RSH bookings. Please try again.')
+      window.alert(errorMessage(error, 'Could not export RSH bookings. Please try again.'))
     } finally {
       setIsExporting(false)
     }
@@ -437,15 +495,15 @@ export default function Dashboard({
     if (totalCount === 0 || isExporting) return
     setIsExporting(true)
     try {
-      const text = loadDashboardExportBookings(bookingQuery).then(
-        buildGroupedExportText
-      )
+      const text = loadDashboardBookingExport(bookingQuery, 'grouped')
       if (typeof ClipboardItem !== 'undefined' && navigator.clipboard.write) {
+        const textBlob = text.then(
+          (value) => new Blob([value], { type: 'text/plain' })
+        )
+        void textBlob.catch(() => {})
         await navigator.clipboard.write([
           new ClipboardItem({
-            'text/plain': text.then(
-              (value) => new Blob([value], { type: 'text/plain' })
-            ),
+            'text/plain': textBlob,
           }),
         ])
       } else {
@@ -470,7 +528,8 @@ export default function Dashboard({
     return date.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
-      day: 'numeric'
+      day: 'numeric',
+      timeZone: ASIA_BANGKOK_TIME_ZONE,
     })
   }
 
@@ -490,7 +549,7 @@ export default function Dashboard({
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             {generatedAt
-              ? `Last synced ${new Date(generatedAt).toLocaleString()}`
+              ? `Last synced ${new Date(generatedAt).toLocaleString('en-GB', { timeZone: ASIA_BANGKOK_TIME_ZONE })}`
               : isLoading
                 ? 'Loading snapshot…'
                 : 'Not synced yet'}
@@ -574,7 +633,11 @@ export default function Dashboard({
           icon={<RSHIcon />}
           variant="warning"
           breakdown={metrics?.rshAttendeesByDay.map(d => ({
-            label: new Date(d.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            label: new Date(d.date).toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              timeZone: ASIA_BANGKOK_TIME_ZONE,
+            }),
             value: formatNumber(d.count),
           }))}
         />
@@ -718,6 +781,14 @@ export default function Dashboard({
           totalCount={bookingTotal}
           pagination={pagination}
           onPaginationChange={setPagination}
+          sorting={sorting}
+          onSortingChange={(next) => {
+            setSorting((current) => {
+              const updated = typeof next === 'function' ? next(current) : next
+              return updated.length > 0 ? updated : DEFAULT_BOOKING_SORTING
+            })
+            setPagination((current) => ({ ...current, pageIndex: 0 }))
+          }}
           onRowClick={setSelectedBooking}
           isLoading={isLoading || isBookingsLoading}
         />

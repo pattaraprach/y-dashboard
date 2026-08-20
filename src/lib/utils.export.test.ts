@@ -73,6 +73,18 @@ describe('party export', () => {
     )
   })
 
+  it('falls back to a trimmed E.164 phone when raw phone is blank', () => {
+    const text = buildGroupedExportText([
+      booking({
+        id: 1,
+        phone_raw: '   ',
+        phone_e164: ' +66812345678 ',
+      }),
+    ])
+
+    expect(text).toContain('+66812345678')
+  })
+
   it('appends +NC on RSH party export when children set', () => {
     const rows = [
       booking({
