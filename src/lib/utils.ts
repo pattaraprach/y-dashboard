@@ -1,6 +1,7 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import { formatChildCountSuffix, getChildCount } from '@/lib/child-count'
+import { ASIA_BANGKOK_TIME_ZONE } from '@/lib/timezone'
 import type {
     BookingExportRow,
     BookingWithAttendees,
@@ -26,6 +27,7 @@ export function formatDate(dateString: string | null): string {
         day: '2-digit',
         month: 'short',
         year: 'numeric',
+        timeZone: ASIA_BANGKOK_TIME_ZONE,
     })
 }
 
@@ -88,6 +90,7 @@ function buildExportParties(
 
         parties.push({
             orderId: booking.woo_id ?? null,
+            phone: booking.phone_raw?.trim() || booking.phone_e164?.trim() || '',
             seat,
             pickup,
             eventDate: booking.event_date ?? null,
@@ -109,6 +112,7 @@ function expandPartiesToRows(parties: ExportParty[]): BookingExportRow[] {
             partySize,
             attendeeIndex: index + 1,
             name,
+            phone: party.phone,
             seat: party.seat,
             pickup: party.pickup,
             eventDate: party.eventDate,
@@ -141,9 +145,11 @@ export function buildGroupedExportText(
             const pickup = party.pickup || '—'
             const status = party.isCancelled ? 'Cancelled' : 'Active'
             const child = formatChildCountSuffix(party.childCount)
-            const header = child
-                ? `${orderLabel} | ${seat} | ${pickup} | ${status} | ${child}`
-                : `${orderLabel} | ${seat} | ${pickup} | ${status}`
+            const fields = [orderLabel, seat, pickup]
+            if (party.phone) fields.push(party.phone)
+            fields.push(status)
+            if (child) fields.push(child)
+            const header = fields.join(' | ')
             return [header, ...party.names].join('\n')
         })
         .join('\n\n')
@@ -172,6 +178,7 @@ export function buildBookingExportCsv(bookings: BookingWithAttendees[]): string 
         'Party size',
         'Attendee #',
         'Name',
+        'Phone',
         'Seat',
         'Pickup',
         'Status',
@@ -183,6 +190,7 @@ export function buildBookingExportCsv(bookings: BookingWithAttendees[]): string 
             String(row.partySize),
             String(row.attendeeIndex),
             row.name,
+            row.phone,
             row.seat,
             row.pickup,
             row.isCancelled ? 'Cancelled' : 'Active',

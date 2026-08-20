@@ -58,6 +58,7 @@ describe('party export', () => {
         woo_id: 1001,
         seat: 'A12',
         pickup_loc: 'Hotel Lobby',
+        phone_raw: '+66 81 234 5678',
         is_cancelled: false,
         cad_yip_attendees: [
           { id: 1, attendee_firstname: 'Alice', attendee_lastname: 'Tan' },
@@ -67,7 +68,21 @@ describe('party export', () => {
     ]
 
     const text = buildGroupedExportText(rows)
-    expect(text).toBe('#1001 | A12 | Hotel Lobby | Active\nAlice Tan\nBob Tan')
+    expect(text).toBe(
+      '#1001 | A12 | Hotel Lobby | +66 81 234 5678 | Active\nAlice Tan\nBob Tan'
+    )
+  })
+
+  it('falls back to a trimmed E.164 phone when raw phone is blank', () => {
+    const text = buildGroupedExportText([
+      booking({
+        id: 1,
+        phone_raw: '   ',
+        phone_e164: ' +66812345678 ',
+      }),
+    ])
+
+    expect(text).toContain('+66812345678')
   })
 
   it('appends +NC on RSH party export when children set', () => {
@@ -116,6 +131,7 @@ describe('party export', () => {
         woo_id: 1001,
         seat: 'A12',
         pickup_loc: 'Lobby',
+        phone_raw: '+66 81 234 5678',
         cad_yip_attendees: [
           { id: 1, attendee_firstname: 'Alice', attendee_lastname: 'Tan' },
           { id: 2, attendee_firstname: 'Bob', attendee_lastname: 'Tan' },
@@ -134,11 +150,15 @@ describe('party export', () => {
     const csv = buildBookingExportCsv(rows)
     const lines = csv.split('\n')
     expect(lines[0]).toBe(
-      'Order ID,Party size,Attendee #,Name,Seat,Pickup,Status,Children'
+      'Order ID,Party size,Attendee #,Name,Phone,Seat,Pickup,Status,Children'
     )
-    expect(lines[1]).toBe('1001,2,1,Alice Tan,A12,Lobby,Active,0')
-    expect(lines[2]).toBe('1001,2,2,Bob Tan,A12,Lobby,Active,0')
-    expect(lines[3]).toBe('2002,1,1,Cara Ng,B1,Dock,Cancelled,0')
+    expect(lines[1]).toBe(
+      "1001,2,1,Alice Tan,'+66 81 234 5678,A12,Lobby,Active,0"
+    )
+    expect(lines[2]).toBe(
+      "1001,2,2,Bob Tan,'+66 81 234 5678,A12,Lobby,Active,0"
+    )
+    expect(lines[3]).toBe('2002,1,1,Cara Ng,,B1,Dock,Cancelled,0')
   })
 
   it('escapes commas and quotes in names', () => {

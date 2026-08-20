@@ -1,4 +1,5 @@
 import type { BookingWithAttendees, HourlyMetrics } from '@/types/database'
+import { ASIA_BANGKOK_TIME_ZONE } from '@/lib/timezone'
 
 function salesTimestamp(booking: {
   order_created_at?: string | null
@@ -28,6 +29,7 @@ export function buildHourlyMetrics(
     const label = new Date(slotStart).toLocaleTimeString('en-GB', {
       hour: '2-digit',
       minute: '2-digit',
+      timeZone: ASIA_BANGKOK_TIME_ZONE,
     })
 
     let totalOrders = 0

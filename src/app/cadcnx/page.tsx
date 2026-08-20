@@ -1,5 +1,10 @@
 import { connection } from 'next/server'
+import {
+  loadDashboardBookingsPage,
+  loadDashboardSnapshot,
+} from '@/app/actions/dashboard'
 import Dashboard from '@/components/Dashboard'
+import { DEFAULT_BOOKING_QUERY } from '@/lib/bookings-query'
 
 /**
  * Opt out of static prerender: dashboard is client+auth and must not evaluate
@@ -7,5 +12,19 @@ import Dashboard from '@/components/Dashboard'
  */
 export default async function CADCNXPage() {
   await connection()
-  return <Dashboard eventCode="CADCNX" eventName="Yipeng (CADCNX)" />
+  const [initialSnapshot, initialBookingPage] = await Promise.all([
+    loadDashboardSnapshot('CADCNX'),
+    loadDashboardBookingsPage({
+      eventCode: 'CADCNX',
+      ...DEFAULT_BOOKING_QUERY,
+    }),
+  ])
+  return (
+    <Dashboard
+      eventCode="CADCNX"
+      eventName="Yipeng (CADCNX)"
+      initialSnapshot={initialSnapshot}
+      initialBookingPage={initialBookingPage}
+    />
+  )
 }

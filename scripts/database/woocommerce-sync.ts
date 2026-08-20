@@ -891,8 +891,6 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
         firstname: order.billing.first_name,
         lastname: order.billing.last_name,
         email: order.billing.email,
-        phone_raw: phone.raw,
-        phone_e164: phone.e164,
         country: countryCode,
         sku: lineItem.sku,
         seat: seatToWrite,
@@ -918,6 +916,11 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
         refunded_at: refundFields.refunded_at,
         last_synced_at: nowIso,
       }
+      const newBookingData = {
+        ...bookingData,
+        phone_raw: phone.raw,
+        phone_e164: phone.e164,
+      }
 
       let bookingId: number
 
@@ -942,12 +945,12 @@ async function syncOrder(order: WooOrder, stats: SyncStats, dryRun: boolean = fa
         if (dryRun) {
           bookingId = 0 // Placeholder for dry run
           console.log(`  [DRY RUN] Would create new booking`)
-          console.log(`    Data:`, JSON.stringify(bookingData, null, 2))
+          console.log(`    Data:`, JSON.stringify(newBookingData, null, 2))
         } else {
           // Create new booking
           const { data, error } = await supabase
             .from('cad_yip_bookings')
-            .insert(bookingData)
+            .insert(newBookingData)
             .select('id')
             .single()
 

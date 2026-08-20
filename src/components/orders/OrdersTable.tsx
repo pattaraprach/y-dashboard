@@ -1,11 +1,11 @@
 'use client'
 
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useMemo } from 'react'
 import {
   type ColumnDef,
+  type OnChangeFn,
   type PaginationState,
   type SortingState,
-  sortFn_datetime,
   useTable,
 } from '@tanstack/react-table'
 import {
@@ -15,14 +15,21 @@ import {
   type DataGridFeatures,
 } from '@/components/reui/data-grid/data-grid'
 import { DataGridPagination } from '@/components/reui/data-grid/data-grid-pagination'
+import { DataGridColumnHeader } from '@/components/reui/data-grid/data-grid-column-header'
 import { DataGridTable } from '@/components/reui/data-grid/data-grid-table'
 import { Badge } from '@/components/reui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
 import { getChildCount } from '@/lib/child-count'
 import { formatCurrency, formatCustomerName, formatDate } from '@/lib/utils'
 import type { Booking } from '@/types/database'
 
 interface OrdersTableProps {
   bookings: Booking[]
+  totalCount: number
+  pagination: PaginationState
+  onPaginationChange: OnChangeFn<PaginationState>
+  sorting: SortingState
+  onSortingChange: OnChangeFn<SortingState>
   onRowClick: (booking: Booking) => void
   isLoading?: boolean
 }
@@ -35,32 +42,24 @@ const TABLE_LAYOUT = {
   columnsResizable: false,
 }
 
-function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps) {
-  const [pagination, setPagination] = useState<PaginationState>({
-    pageIndex: 0,
-    pageSize: 25,
-  })
-  // Latest Woo orders first (woo_id). Prefer order_created_at column when sorting by date.
-  const [sorting, setSorting] = useState<SortingState>([
-    { id: 'woo_id', desc: true },
-  ])
+const CELL_SKELETON = <Skeleton className="h-5 w-full max-w-24" />
 
-  // Filter changes should jump back to page 1 without sorting work on a dead page.
-  // Defer so setState is not synchronous in the effect body (react-hooks/set-state-in-effect).
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setPagination((prev) =>
-        prev.pageIndex === 0 ? prev : { ...prev, pageIndex: 0 }
-      )
-    }, 0)
-    return () => clearTimeout(timer)
-  }, [bookings])
+function OrdersTableInner({
+  bookings,
+  totalCount,
+  pagination,
+  onPaginationChange,
+  sorting,
+  onSortingChange,
+  onRowClick,
+  isLoading,
+}: OrdersTableProps) {
 
   const columns = useMemo<ColumnDef<DataGridFeatures, Booking>[]>(
     () => [
       {
         accessorKey: 'woo_id',
-        header: 'ID',
+        header: ({ column }) => <DataGridColumnHeader title="ID" column={column} />,
         // String name resolves against dataGridFeatures.sortFns (tree-shaken registry).
         sortFn: 'basic',
         cell: ({ row }) => (
@@ -72,7 +71,7 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
       },
       {
         id: 'name',
-        header: 'Name',
+        header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
         accessorFn: (row) => formatCustomerName(row),
         cell: ({ getValue }) => (
           <span className="font-medium">{getValue<string>() || '—'}</span>
@@ -81,7 +80,7 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
       },
       {
         accessorKey: 'email',
-        header: 'Email',
+        header: ({ column }) => <DataGridColumnHeader title="Email" column={column} />,
         cell: ({ getValue }) => (
           <span className="block max-w-[180px] truncate text-muted-foreground">
             {getValue<string>() || '—'}
@@ -91,13 +90,13 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
       },
       {
         accessorKey: 'event_date',
-        header: 'Event Date',
+        header: ({ column }) => <DataGridColumnHeader title="Event Date" column={column} />,
         cell: ({ getValue }) => formatDate(getValue<string | null>()),
         size: 120,
       },
       {
         accessorKey: 'zone_code',
-        header: 'Zone',
+        header: ({ column }) => <DataGridColumnHeader title="Zone" column={column} />,
         cell: ({ row }) =>
           row.original.zone_code ? (
             <Badge variant="primary-light" size="sm">
@@ -110,7 +109,7 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
       },
       {
         accessorKey: 'amount',
-        header: 'Amount',
+        header: ({ column }) => <DataGridColumnHeader title="Amount" column={column} />,
         cell: ({ getValue }) => (
           <span className="font-medium tabular-nums">
             {formatCurrency(Number(getValue()))}
@@ -120,11 +119,12 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
         meta: {
           headerClassName: 'text-right',
           cellClassName: 'text-right',
+          skeleton: CELL_SKELETON,
         },
       },
       {
         accessorKey: 'seat',
-        header: 'Seat',
+        header: ({ column }) => <DataGridColumnHeader title="Seat" column={column} />,
         cell: ({ row, getValue }) => {
           const seat = getValue<string | null>()
           const children = row.original.is_rsh_transfer
@@ -154,7 +154,7 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
       },
       {
         accessorKey: 'pickup_loc',
-        header: 'Pickup',
+        header: ({ column }) => <DataGridColumnHeader title="Pickup" column={column} />,
         cell: ({ getValue }) => {
           const pickup = getValue<string | null>()
           return (
@@ -166,9 +166,8 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
         size: 140,
       },
       {
-        id: 'status',
-        header: 'Status',
-        accessorFn: (row) => row,
+        accessorKey: 'is_cancelled',
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         enableSorting: false,
         cell: ({ row }) => {
           const b = row.original
@@ -203,10 +202,8 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
       },
       {
         id: 'order_created_at',
-        header: 'Ordered',
+        header: ({ column }) => <DataGridColumnHeader title="Ordered" column={column} />,
         accessorFn: (row) => row.order_created_at || row.created_at,
-        // Direct fn import: not registered on dataGridFeatures, so no full sortFns registry cost.
-        sortFn: sortFn_datetime,
         cell: ({ row }) => (
           <span className="text-muted-foreground">
             {formatDate(row.original.order_created_at || row.original.created_at)}
@@ -222,26 +219,30 @@ function OrdersTableInner({ bookings, onRowClick, isLoading }: OrdersTableProps)
     features: dataGridFeatures,
     data: bookings,
     columns,
+    defaultColumn: { meta: { skeleton: CELL_SKELETON } },
     // Stable row identity keeps selection/pinning/memoization correct under v9's new wrappers.
     getRowId: (row) => String(row.id),
     state: { pagination, sorting },
-    onPaginationChange: setPagination,
-    onSortingChange: setSorting,
-    // Avoid auto-reset thrash when parent rebuilds the filtered array identity.
+    onPaginationChange,
+    onSortingChange,
+    manualPagination: true,
+    manualSorting: true,
+    rowCount: totalCount,
+    enableSorting: true,
     autoResetPageIndex: false,
   })
 
   return (
     <DataGrid
       table={table}
-      recordCount={bookings.length}
-      isLoading={isLoading}
+      recordCount={totalCount}
+      isLoading={Boolean(isLoading && bookings.length === 0)}
       loadingMode="skeleton"
       emptyMessage="No orders found"
       onRowClick={onRowClick}
       tableLayout={TABLE_LAYOUT}
     >
-      <div className="w-full space-y-2.5">
+      <div className="w-full space-y-2.5" aria-busy={isLoading}>
         {/*
           No DataGridScrollArea + headerSticky: that path attaches ResizeObservers
           and custom scrollbar metrics and was a major runtime cost vs the old table.

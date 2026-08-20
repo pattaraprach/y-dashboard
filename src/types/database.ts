@@ -134,6 +134,11 @@ export type BookingWithAttendees = Booking & {
     cad_yip_attendees?: AttendeeName[] | null
 }
 
+export type BookingOpsPatch = Pick<
+    Booking,
+    'id' | 'phone_raw' | 'phone_e164' | 'seat' | 'pickup_loc' | 'child_count'
+>
+
 export type BookingWithDetails = Booking & {
     attendees: Attendee[]
     links: Link[]
@@ -142,6 +147,7 @@ export type BookingWithDetails = Booking & {
 /** One booking party for grouped export (attendees share seat/pickup) */
 export interface ExportParty {
     orderId: number | null
+    phone: string
     seat: string
     pickup: string
     eventDate: string | null
@@ -158,6 +164,7 @@ export interface BookingExportRow {
     partySize: number
     attendeeIndex: number
     name: string
+    phone: string
     seat: string
     pickup: string
     eventDate: string | null
