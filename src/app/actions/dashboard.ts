@@ -195,15 +195,17 @@ export async function loadDashboardBookingExport(
   if (countPage.total > BOOKING_EXPORT_PAGE_SIZE) {
     throw new Error(`Export exceeds ${BOOKING_EXPORT_PAGE_SIZE} bookings.`)
   }
-  const bookings =
+  const exportPage =
     countPage.total <= 1
-      ? countPage.bookings
-      : (
-          await fetchBookingPage(
-            { ...base, pageIndex: 0, pageSize: BOOKING_EXPORT_PAGE_SIZE },
-            client
-          )
-        ).bookings
+      ? countPage
+      : await fetchBookingPage(
+          { ...base, pageIndex: 0, pageSize: BOOKING_EXPORT_PAGE_SIZE },
+          client
+        )
+  if (exportPage.total > BOOKING_EXPORT_PAGE_SIZE) {
+    throw new Error(`Export exceeds ${BOOKING_EXPORT_PAGE_SIZE} bookings.`)
+  }
+  const bookings = exportPage.bookings
 
   const attendees = new Map<number, AttendeeName[]>()
   const ids = bookings.map((booking) => booking.id)
