@@ -8,7 +8,7 @@ vi.mock('@/lib/supabase-admin', () => ({
 
 const validSummary = {
   generatedAt: '2026-08-20T00:00:00.000Z',
-  metrics: {},
+  metrics: { rshAttendeesByDay: [] },
   availableEventDates: [],
   eventMetrics: [],
   dailyMetrics: [],
@@ -32,6 +32,7 @@ describe('buildDashboardSnapshot', () => {
   it.each([
     { ...validSummary, generatedAt: null },
     { ...validSummary, metrics: [] },
+    { ...validSummary, metrics: {} },
     { ...validSummary, availableEventDates: {} },
     { ...validSummary, eventMetrics: {} },
     { ...validSummary, dailyMetrics: {} },

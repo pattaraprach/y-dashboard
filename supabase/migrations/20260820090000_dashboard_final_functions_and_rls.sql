@@ -346,30 +346,8 @@ begin
           or coalesce(b.zone, '') ilike '%' || v_search || '%' escape E'\\'
         )
     ),
-    ranked as (
+    paged as (
       select
-        row_number() over (
-          order by
-            case when v_sort_column = 'woo_id' and p_sort_desc then woo_id end desc nulls last,
-            case when v_sort_column = 'woo_id' and not p_sort_desc then woo_id end asc nulls last,
-            case when v_sort_column = 'name' and p_sort_desc then lower(coalesce(firstname, '') || ' ' || coalesce(lastname, '')) end desc nulls last,
-            case when v_sort_column = 'name' and not p_sort_desc then lower(coalesce(firstname, '') || ' ' || coalesce(lastname, '')) end asc nulls last,
-            case when v_sort_column = 'email' and p_sort_desc then email end desc nulls last,
-            case when v_sort_column = 'email' and not p_sort_desc then email end asc nulls last,
-            case when v_sort_column = 'event_date' and p_sort_desc then event_date end desc nulls last,
-            case when v_sort_column = 'event_date' and not p_sort_desc then event_date end asc nulls last,
-            case when v_sort_column = 'zone_code' and p_sort_desc then zone_code end desc nulls last,
-            case when v_sort_column = 'zone_code' and not p_sort_desc then zone_code end asc nulls last,
-            case when v_sort_column = 'amount' and p_sort_desc then amount end desc nulls last,
-            case when v_sort_column = 'amount' and not p_sort_desc then amount end asc nulls last,
-            case when v_sort_column = 'seat' and p_sort_desc then seat end desc nulls last,
-            case when v_sort_column = 'seat' and not p_sort_desc then seat end asc nulls last,
-            case when v_sort_column = 'pickup_loc' and p_sort_desc then pickup_loc end desc nulls last,
-            case when v_sort_column = 'pickup_loc' and not p_sort_desc then pickup_loc end asc nulls last,
-            case when v_sort_column = 'order_created_at' and p_sort_desc then coalesce(order_created_at, created_at) end desc nulls last,
-            case when v_sort_column = 'order_created_at' and not p_sort_desc then coalesce(order_created_at, created_at) end asc nulls last,
-            id desc
-        ) as position,
         id,
         created_at,
         order_created_at,
@@ -406,16 +384,32 @@ begin
         refunded_at,
         last_synced_at
       from filtered
-    ),
-    paged as (
-      select *
-      from ranked
-      where position > v_page_index * v_page_size
-        and position <= (v_page_index + 1) * v_page_size
+      order by
+        case when v_sort_column = 'woo_id' and p_sort_desc then woo_id end desc nulls last,
+        case when v_sort_column = 'woo_id' and not p_sort_desc then woo_id end asc nulls last,
+        case when v_sort_column = 'name' and p_sort_desc then lower(coalesce(firstname, '') || ' ' || coalesce(lastname, '')) end desc nulls last,
+        case when v_sort_column = 'name' and not p_sort_desc then lower(coalesce(firstname, '') || ' ' || coalesce(lastname, '')) end asc nulls last,
+        case when v_sort_column = 'email' and p_sort_desc then email end desc nulls last,
+        case when v_sort_column = 'email' and not p_sort_desc then email end asc nulls last,
+        case when v_sort_column = 'event_date' and p_sort_desc then event_date end desc nulls last,
+        case when v_sort_column = 'event_date' and not p_sort_desc then event_date end asc nulls last,
+        case when v_sort_column = 'zone_code' and p_sort_desc then zone_code end desc nulls last,
+        case when v_sort_column = 'zone_code' and not p_sort_desc then zone_code end asc nulls last,
+        case when v_sort_column = 'amount' and p_sort_desc then amount end desc nulls last,
+        case when v_sort_column = 'amount' and not p_sort_desc then amount end asc nulls last,
+        case when v_sort_column = 'seat' and p_sort_desc then seat end desc nulls last,
+        case when v_sort_column = 'seat' and not p_sort_desc then seat end asc nulls last,
+        case when v_sort_column = 'pickup_loc' and p_sort_desc then pickup_loc end desc nulls last,
+        case when v_sort_column = 'pickup_loc' and not p_sort_desc then pickup_loc end asc nulls last,
+        case when v_sort_column = 'order_created_at' and p_sort_desc then coalesce(order_created_at, created_at) end desc nulls last,
+        case when v_sort_column = 'order_created_at' and not p_sort_desc then coalesce(order_created_at, created_at) end asc nulls last,
+        id desc
+      limit v_page_size
+      offset v_page_index * v_page_size
     )
     select jsonb_build_object(
       'bookings', coalesce((
-        select jsonb_agg(to_jsonb(p) - 'position' order by position) from paged p
+        select jsonb_agg(to_jsonb(p)) from paged p
       ), '[]'::jsonb),
       'total', (select count(*) from filtered)
     )

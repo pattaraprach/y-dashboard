@@ -46,6 +46,7 @@ export async function buildDashboardSnapshot(
     !isRecord(data) ||
     typeof data.generatedAt !== 'string' ||
     !isRecord(data.metrics) ||
+    !Array.isArray(data.metrics.rshAttendeesByDay) ||
     !Array.isArray(data.availableEventDates) ||
     !Array.isArray(data.eventMetrics) ||
     !Array.isArray(data.dailyMetrics) ||

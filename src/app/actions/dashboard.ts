@@ -188,14 +188,22 @@ export async function loadDashboardBookingExport(
   const userClient = await requireAuthenticatedUser()
   const base = normalizeBookingQuery(input)
   const client = hasServiceRoleKey() ? createServiceClient() : userClient
-  const page = await fetchBookingPage(
-    { ...base, pageIndex: 0, pageSize: BOOKING_EXPORT_PAGE_SIZE },
+  const countPage = await fetchBookingPage(
+    { ...base, pageIndex: 0, pageSize: 1 },
     client
   )
-  if (page.total > BOOKING_EXPORT_PAGE_SIZE) {
+  if (countPage.total > BOOKING_EXPORT_PAGE_SIZE) {
     throw new Error(`Export exceeds ${BOOKING_EXPORT_PAGE_SIZE} bookings.`)
   }
-  const bookings = page.bookings
+  const bookings =
+    countPage.total <= 1
+      ? countPage.bookings
+      : (
+          await fetchBookingPage(
+            { ...base, pageIndex: 0, pageSize: BOOKING_EXPORT_PAGE_SIZE },
+            client
+          )
+        ).bookings
 
   const attendees = new Map<number, AttendeeName[]>()
   const ids = bookings.map((booking) => booking.id)

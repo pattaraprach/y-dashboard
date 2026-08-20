@@ -232,11 +232,8 @@ function OrdersTableInner({
     autoResetPageIndex: false,
   })
 
-  const rowsKey = useMemo(() => JSON.stringify(bookings), [bookings])
-
   return (
     <DataGrid
-      key={rowsKey}
       table={table}
       recordCount={totalCount}
       isLoading={Boolean(isLoading && bookings.length === 0)}
