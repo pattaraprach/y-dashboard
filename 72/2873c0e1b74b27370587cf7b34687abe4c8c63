@@ -1,0 +1,25 @@
+src/lib/build-dashboard-snapshot.test.ts
+  s_4fc610fc16f0a8::t_424af1ba377910 11,35
+supabase/migrations/20260820090000_dashboard_final_functions_and_rls.sql
+  s_4fc610fc16f0a8::t_c5b46f26fd308a 349,387-408,412
+src/lib/build-dashboard-snapshot.ts
+  s_4fc610fc16f0a8::t_424af1ba377910 49
+src/app/actions/dashboard.ts
+  s_4fc610fc16f0a8::t_424af1ba377910 191-192,195,198-206
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "722873c0e1b74b27370587cf7b34687abe4c8c63",
+  "prompts": {},
+  "sessions": {
+    "s_4fc610fc16f0a8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01820-6c4f-77c0-b998-93edceb961f6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
