@@ -1,0 +1,76 @@
+src/app/actions/dashboard.ts
+  s_4fc610fc16f0a8::t_b4354929d5bafa 195,198
+  s_4fc610fc16f0a8::t_bfc71a715387ff 182-183,217-220
+  s_4fc610fc16f0a8::t_a37d5279e3b1bd 13-14,21-28,51-54,61-64,80-81,93,97-120,149,163-165,174-178,181,184,201,206-208,214,216,221,225,229-231
+  s_4fc610fc16f0a8::t_1a4fa11a4f70fa 185-187
+src/app/actions/bookings.ts
+  s_4fc610fc16f0a8::t_f25ca5a62e70db 23-27,73,168,175
+  s_4fc610fc16f0a8::t_618e2afe0f1921 29
+src/lib/build-dashboard-snapshot.test.ts
+  s_4fc610fc16f0a8::t_b09894354bba9f 1,4-7
+  s_4fc610fc16f0a8::t_133d4933adfa71 2-3,8-45
+supabase/migrations/20260820090000_dashboard_final_functions_and_rls.sql
+  s_4fc610fc16f0a8::t_498dfe46b02eac 64,271,338-346
+  s_4fc610fc16f0a8::t_26152da665d83f 369-370
+  s_4fc610fc16f0a8::t_95784d78186e7b 7-12,14-20,432
+  s_4fc610fc16f0a8::t_66994370625f25 1-6,13,21-63,65-270,272-337,347-368,371-431
+src/lib/utils.export.test.ts
+  s_4fc610fc16f0a8::t_f242d1d601b875 76-87
+src/components/orders/OrdersTable.tsx
+  s_4fc610fc16f0a8::t_a665a6a387b8f6 8,18,31-32,52-53,62,74,83,93,99,112,127,157,169-170,205,225,227,229,231,235-236,239,242,248
+src/components/reui/data-grid/data-grid.tsx
+  s_4fc610fc16f0a8::t_cbd05a5470803c 555
+src/components/reui/data-grid/data-grid-table.tsx
+  s_4fc610fc16f0a8::t_f242d1d601b875 1741
+  s_4fc610fc16f0a8::t_cbd05a5470803c 2038
+src/components/Dashboard.tsx
+  s_4fc610fc16f0a8::t_720d017107355b 411-418
+  s_4fc610fc16f0a8::t_47bcb3661ee62f 226-232,265,289-292,309-312,337-340
+  s_4fc610fc16f0a8::t_22039101d71b45 115,164-165,279,287,299,307,327,335,786-789
+  s_4fc610fc16f0a8::t_4a1acea5fba721 12,123-127,168,179,419-422,424,434,450,457,460,464,474,477-478,484,488,498,500-503,506,532,552
+  s_4fc610fc16f0a8::t_31640724db2d70 23,55,181-185,200-201,211,784-785,790-791
+  s_4fc610fc16f0a8::t_868d5325617512 27-30,451
+  s_4fc610fc16f0a8::t_610e3668603b8f 636-640
+  s_4fc610fc16f0a8::t_a93490e93e1fb4 216,223,233-236,255,260-262
+  s_4fc610fc16f0a8::t_7b4ce872a6a3bb 360-381,531
+src/lib/bookings-query.ts
+  s_4fc610fc16f0a8::t_785516a4e2d042 12
+  s_4fc610fc16f0a8::t_3967b360d61b5b 10-11,13-22,32-33,39,49-50,54
+src/lib/utils.ts
+  s_4fc610fc16f0a8::t_f242d1d601b875 4,30,93
+src/lib/timezone.ts
+  s_4fc610fc16f0a8::t_f242d1d601b875 1
+  s_4fc610fc16f0a8::t_868d5325617512 2-8
+src/lib/hourly-metrics.ts
+  s_4fc610fc16f0a8::t_f242d1d601b875 2,32
+src/lib/build-dashboard-snapshot.ts
+  s_4fc610fc16f0a8::t_66994370625f25 26-29,45-54
+scripts/database/woocommerce-sync.ts
+  s_4fc610fc16f0a8::t_13a8ab1d1bd31e 919-922,953
+  s_4fc610fc16f0a8::t_bafb1120ed500d 948
+  s_182b612b7f988c::t_b0ea29716a8477 923
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "73d6a0cf46e1690e4d6c57cae12c036af6e4e6fc",
+  "prompts": {},
+  "sessions": {
+    "s_182b612b7f988c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0179b-0560-7e32-b473-19de78acbbd1",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    },
+    "s_4fc610fc16f0a8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a01820-6c4f-77c0-b998-93edceb961f6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
