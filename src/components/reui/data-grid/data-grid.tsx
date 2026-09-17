@@ -402,6 +402,12 @@ function DataGridProvider<TData extends object>({
   )
 
   const tableState = table.state
+  // Row data is NOT part of table.state (it lives in options), so without
+  // this dep a data-only update — same count, page, and sorting, e.g. a seat
+  // edit after save — never republishes the context and the body keeps
+  // showing stale rows. v9 reprocesses row models when the data reference
+  // changes, so identity comparison here is both correct and cheap.
+  const tableData = table.options.data
 
   // Memoize context value so consumers don't re-render during column resize.
   // Column sizing state is intentionally excluded from deps -- CSS variables
@@ -432,6 +438,7 @@ function DataGridProvider<TData extends object>({
       JSON.stringify(props.tableLayout),
       // eslint-disable-next-line react-hooks/exhaustive-deps
       JSON.stringify(props.tableClassNames),
+      tableData,
       tableState.sorting,
       tableState.pagination,
       tableState.columnFilters,

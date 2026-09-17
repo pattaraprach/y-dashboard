@@ -118,6 +118,13 @@ type RshFilter = 'all' | 'rsh' | 'non-rsh'
 type StatusFilter = 'active' | 'cancelled' | 'all'
 /** Which operation produced the header error banner; drives Retry. */
 type LoadErrorSource = 'bookings' | 'snapshot' | 'resync' | 'refresh'
+/**
+ * Upper bound for one orders fetch. A hung request (stalled pooler/socket)
+ * must surface as an error with a working Retry instead of wedging the
+ * query's in-flight lock forever. Worst observed latency (write storm) is
+ * well under this; quiet searches resolve in under a second.
+ */
+const BOOKINGS_FETCH_TIMEOUT_MS = 20_000
 const DEFAULT_BOOKING_SORTING: SortingState = [{ id: 'woo_id', desc: true }]
 
 export default function Dashboard({
@@ -247,6 +254,10 @@ export default function Dashboard({
   const bookingQueryRef = useRef(bookingQuery)
   const loadedQueryKey = useRef(bookingQueryKey(bookingQuery))
   const inFlightQueryKey = useRef<string | null>(null)
+  // When the in-flight fetch started: if a request somehow never settles
+  // (the timeout abort below normally prevents this), a stale lock must not
+  // wedge its query forever.
+  const inFlightSinceRef = useRef(0)
   const bookingAbortRef = useRef<AbortController | null>(null)
   const bookingFetchGen = useRef(0)
 
@@ -262,12 +273,26 @@ export default function Dashboard({
         force?: boolean
         abortPrevious?: boolean
         silent?: boolean
+        /**
+         * Skip the same-query in-flight dedup. Explicit reloads (save,
+         * resync, cache) need post-write data: letting a stale in-flight
+         * fetch win would overwrite fresh optimistic state with pre-write
+         * rows and leave the table showing old data.
+         */
+        dedup?: boolean
       }
     ) => {
       const queryKey = bookingQueryKey(query)
       // A fetch for this exact query is already running: let it paint instead
-      // of firing a duplicate that can only discard it.
-      if (queryKey === inFlightQueryKey.current) return
+      // of firing a duplicate that can only discard it — unless its lock is
+      // older than the fetch timeout, in which case treat it as dead.
+      if (
+        opts?.dedup !== false &&
+        queryKey === inFlightQueryKey.current &&
+        Date.now() - inFlightSinceRef.current < BOOKINGS_FETCH_TIMEOUT_MS
+      ) {
+        return
+      }
       if (!opts?.force && queryKey === loadedQueryKey.current) {
         return
       }
@@ -280,6 +305,16 @@ export default function Dashboard({
       bookingAbortRef.current = ac
       const gen = ++bookingFetchGen.current
       inFlightQueryKey.current = queryKey
+      inFlightSinceRef.current = Date.now()
+      // Bound every fetch: a request that never settles (stalled pooler or
+      // socket) aborts here so the query stays retryable. The timedOut flag
+      // distinguishes this from a supersede-abort so it reports an error
+      // instead of dropping silently, no matter how postgrest surfaces it.
+      let timedOut = false
+      const timeout = setTimeout(() => {
+        timedOut = true
+        ac.abort()
+      }, BOOKINGS_FETCH_TIMEOUT_MS)
       if (opts?.showLoading) {
         setIsBookingsLoading(true)
         // A fresh explicit load supersedes the previous error display; a
@@ -300,9 +335,8 @@ export default function Dashboard({
         // Other sources (snapshot/resync/refresh) need their own operations.
         if (loadErrorSourceRef.current === 'bookings') clearError()
       } catch (error) {
-        if (gen !== bookingFetchGen.current || isBookingPageAbortError(error)) {
-          return
-        }
+        if (gen !== bookingFetchGen.current) return
+        if (!timedOut && isBookingPageAbortError(error)) return
         console.error('Error loading booking page:', error)
         // Background realtime refreshes must not flash the error banner on
         // transient blips — the next refresh retries anyway. Explicit loads
@@ -310,10 +344,15 @@ export default function Dashboard({
         if (!opts?.silent) {
           reportError(
             'bookings',
-            error instanceof Error ? error.message : 'Failed to load orders'
+            timedOut
+              ? 'Search took too long. Please retry.'
+              : error instanceof Error
+                ? error.message
+                : 'Failed to load orders'
           )
         }
       } finally {
+        clearTimeout(timeout)
         if (gen === bookingFetchGen.current) {
           inFlightQueryKey.current = null
           setIsBookingsLoading(false)
@@ -324,7 +363,14 @@ export default function Dashboard({
   )
 
   const loadCurrentBookingPage = useCallback(async () => {
-    await loadBookingPage(bookingQueryRef.current, { force: true })
+    // Explicit reload (save/resync/cache): abort any stale in-flight fetch
+    // and refetch post-write rows. The default dedup would skip this when a
+    // background refresh is flying and let its pre-write response clobber
+    // fresh optimistic state, leaving old data on screen.
+    await loadBookingPage(bookingQueryRef.current, {
+      force: true,
+      dedup: false,
+    })
   }, [loadBookingPage])
 
   useEffect(() => {
@@ -800,8 +846,23 @@ export default function Dashboard({
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-xl font-semibold text-foreground">Orders</h2>
-              <p className="text-sm text-muted-foreground">
-                {totalCount} matching order{totalCount === 1 ? '' : 's'}
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>
+                  {totalCount} matching order{totalCount === 1 ? '' : 's'}
+                </span>
+                {/* Reserved space so slow searches read as loading, never as
+                    a stuck table: without this, old rows sit with zero
+                    indication while a fetch is in flight. */}
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1.5 text-xs',
+                    !isBookingsLoading && 'invisible'
+                  )}
+                  role="status"
+                >
+                  <Spinner className="size-3" />
+                  Updating…
+                </span>
               </p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
