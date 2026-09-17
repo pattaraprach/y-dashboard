@@ -1,0 +1,19 @@
+src/components/Dashboard.tsx
+  s_ca34ab6674a833::t_d60bcfe882a0ae 863-865
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "82dc7a74e1e119ca96d11961de13262939527516",
+  "prompts": {},
+  "sessions": {
+    "s_ca34ab6674a833": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_f522483cdffe6pQKzxfvwJlrFC",
+        "model": "muse-spark-1.3-contributor-free"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
