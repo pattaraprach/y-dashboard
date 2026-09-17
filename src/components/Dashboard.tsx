@@ -10,18 +10,22 @@ import {
 } from 'react'
 import {
   loadDashboardBookingExport,
-  loadDashboardBookingsPage,
   loadFreshDashboardSnapshot,
   loadDashboardSnapshot,
   resyncDashboardSnapshot,
 } from '@/app/actions/dashboard'
 import type { DashboardSnapshot } from '@/lib/build-dashboard-snapshot'
 import { applyBookingOpsPatch } from '@/lib/dashboard-booking-patch'
-import type {
-  DashboardBookingPage,
-  DashboardBookingQuery,
-  DashboardBookingSortColumn,
+import {
+  bookingQueryKey,
+  type DashboardBookingPage,
+  type DashboardBookingQuery,
+  type DashboardBookingSortColumn,
 } from '@/lib/bookings-query'
+import {
+  fetchBookingPage,
+  isBookingPageAbortError,
+} from '@/lib/fetch-booking-page'
 import { getSupabaseBrowserClient } from '@/lib/supabase'
 import {
   ASIA_BANGKOK_TIME_ZONE,
@@ -212,35 +216,88 @@ export default function Dashboard({
     ]
   )
   const bookingQueryRef = useRef(bookingQuery)
-  const loadedQueryKey = useRef(JSON.stringify(bookingQuery))
-  const bookingPageRequestId = useRef(0)
+  const loadedQueryKey = useRef(bookingQueryKey(bookingQuery))
+  const inFlightQueryKey = useRef<string | null>(null)
+  const bookingAbortRef = useRef<AbortController | null>(null)
+  const bookingFetchGen = useRef(0)
 
   useEffect(() => {
     bookingQueryRef.current = bookingQuery
   }, [bookingQuery])
 
+  const loadBookingPage = useCallback(
+    async (
+      query: DashboardBookingQuery,
+      opts?: {
+        showLoading?: boolean
+        force?: boolean
+        abortPrevious?: boolean
+        silent?: boolean
+      }
+    ) => {
+      const queryKey = bookingQueryKey(query)
+      // A fetch for this exact query is already running: let it paint instead
+      // of firing a duplicate that can only discard it.
+      if (queryKey === inFlightQueryKey.current) return
+      if (!opts?.force && queryKey === loadedQueryKey.current) {
+        return
+      }
+
+      // Searches abort the previous fetch (fast typing). Realtime refreshes
+      // must NOT: aborting on every refresh under write traffic means no fetch
+      // ever completes and the table spins forever.
+      if (opts?.abortPrevious !== false) bookingAbortRef.current?.abort()
+      const ac = new AbortController()
+      bookingAbortRef.current = ac
+      const gen = ++bookingFetchGen.current
+      inFlightQueryKey.current = queryKey
+      if (opts?.showLoading) {
+        setIsBookingsLoading(true)
+        // A fresh explicit load supersedes the previous error display; a
+        // successful retry must not leave a stale banner behind.
+        setLoadError(null)
+      }
+
+      try {
+        const page = await fetchBookingPage(
+          getSupabaseBrowserClient(),
+          query,
+          { signal: ac.signal }
+        )
+        if (gen !== bookingFetchGen.current) return
+        applyBookingPage(page)
+        loadedQueryKey.current = queryKey
+      } catch (error) {
+        if (gen !== bookingFetchGen.current || isBookingPageAbortError(error)) {
+          return
+        }
+        console.error('Error loading booking page:', error)
+        // Background realtime refreshes must not flash the error banner on
+        // transient blips — the next refresh retries anyway. Explicit loads
+        // (search, retry, resync) still surface failures.
+        if (!opts?.silent) {
+          setLoadError(
+            error instanceof Error ? error.message : 'Failed to load orders'
+          )
+        }
+      } finally {
+        if (gen === bookingFetchGen.current) {
+          inFlightQueryKey.current = null
+          setIsBookingsLoading(false)
+        }
+      }
+    },
+    [applyBookingPage]
+  )
+
   const loadCurrentBookingPage = useCallback(async () => {
-    const requestId = ++bookingPageRequestId.current
-    const query = bookingQueryRef.current
-    const queryKey = JSON.stringify(query)
-    let page: DashboardBookingPage
-    try {
-      page = await loadDashboardBookingsPage(query)
-    } catch (error) {
-      if (requestId === bookingPageRequestId.current) throw error
-      return
-    }
-    if (
-      requestId === bookingPageRequestId.current &&
-      queryKey === JSON.stringify(bookingQueryRef.current)
-    ) {
-      applyBookingPage(page)
-    }
-  }, [applyBookingPage])
+    await loadBookingPage(bookingQueryRef.current, { force: true })
+  }, [loadBookingPage])
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      setDebouncedSearch(searchTerm.trim())
+      const next = searchTerm.trim()
+      setDebouncedSearch((current) => (current === next ? current : next))
       setPagination((current) =>
         current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }
       )
@@ -249,31 +306,14 @@ export default function Dashboard({
   }, [searchTerm])
 
   useEffect(() => {
-    const queryKey = JSON.stringify(bookingQuery)
-    if (queryKey === loadedQueryKey.current) return
-    loadedQueryKey.current = queryKey
-    const requestId = ++bookingPageRequestId.current
-    let cancelled = false
-    setIsBookingsLoading(true)
-    void loadDashboardBookingsPage(bookingQuery)
-      .then((page) => {
-        if (!cancelled && requestId === bookingPageRequestId.current) {
-          applyBookingPage(page)
-        }
-      })
-      .catch((error) => {
-        if (!cancelled && requestId === bookingPageRequestId.current) {
-          console.error('Error loading booking page:', error)
-          setLoadError(errorMessage(error, 'Failed to load orders'))
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setIsBookingsLoading(false)
-      })
+    void loadBookingPage(bookingQuery, { showLoading: true })
+  }, [bookingQuery, loadBookingPage])
+
+  useEffect(() => {
     return () => {
-      cancelled = true
+      bookingAbortRef.current?.abort()
     }
-  }, [bookingQuery, applyBookingPage])
+  }, [])
 
   const loadFromCache = useCallback(async () => {
     const requestId = ++snapshotRequestId.current
@@ -318,39 +358,61 @@ export default function Dashboard({
   useEffect(() => {
     const supabase = getSupabaseBrowserClient()
     let timer: ReturnType<typeof setTimeout> | undefined
-    let refreshing = false
-    let pending = false
+    let refreshRunning = false
+    let refreshQueued = false
     let stopped = false
 
     const refresh = async () => {
-      if (stopped || refreshing || !pending) return
-      const requestId = ++snapshotRequestId.current
-      pending = false
-      refreshing = true
+      if (stopped || refreshRunning) {
+        // Never stack concurrent refreshes: overlapping snapshot+page fetches
+        // can only discard each other (and abort each other). Run once more
+        // after the current one instead.
+        if (!stopped) refreshQueued = true
+        return
+      }
+      refreshRunning = true
       try {
-        const [snapshot] = await Promise.all([
-          loadFreshDashboardSnapshot(eventCode),
-          loadCurrentBookingPage(),
-        ])
-        if (requestId === snapshotRequestId.current) applySnapshot(snapshot)
-      } catch (error) {
-        if (requestId === snapshotRequestId.current) {
-          console.error('Error refreshing realtime dashboard data:', error)
-          setLoadError(errorMessage(error, 'Failed to refresh dashboard data'))
-        }
+        do {
+          refreshQueued = false
+          const requestId = ++snapshotRequestId.current
+          try {
+            const [snapshot] = await Promise.all([
+              loadFreshDashboardSnapshot(eventCode),
+              // Same-query dedup inside loadBookingPage lets an in-flight
+              // search fetch paint; abortPrevious:false keeps this refresh
+              // from starving it under write traffic; silent:true keeps
+              // transient blips out of the error banner.
+              loadBookingPage(bookingQueryRef.current, {
+                force: true,
+                abortPrevious: false,
+                silent: true,
+              }),
+            ])
+            if (requestId === snapshotRequestId.current) applySnapshot(snapshot)
+          } catch (error) {
+            if (requestId === snapshotRequestId.current) {
+              console.error('Error refreshing realtime dashboard data:', error)
+              setLoadError(errorMessage(error, 'Failed to refresh dashboard data'))
+            }
+          }
+        } while (refreshQueued && !stopped)
       } finally {
-        refreshing = false
-        if (pending && !stopped) scheduleRefresh()
+        refreshRunning = false
       }
     }
 
     const scheduleRefresh = () => {
-      pending = true
-      if (timer || refreshing) return
+      // Background tabs reconcile on focus instead of piling up refreshes.
+      if (document.hidden || stopped) return
+      if (refreshRunning) {
+        refreshQueued = true
+        return
+      }
+      if (timer) return
       timer = setTimeout(() => {
         timer = undefined
         void refresh()
-      }, 750)
+      }, 2500)
     }
 
     const channel = supabase
@@ -555,7 +617,21 @@ export default function Dashboard({
                 : 'Not synced yet'}
           </p>
           {loadError ? (
-            <p className="mt-1 text-sm text-destructive">{loadError}</p>
+            <p className="mt-1 text-sm text-destructive">
+              {loadError}{' '}
+              <button
+                type="button"
+                className="underline underline-offset-2 hover:text-destructive/80"
+                onClick={() =>
+                  void loadBookingPage(bookingQueryRef.current, {
+                    force: true,
+                    showLoading: true,
+                  })
+                }
+              >
+                Retry
+              </button>
+            </p>
           ) : null}
         </div>
         <Button

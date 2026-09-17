@@ -10,11 +10,11 @@ import {
 import { getCachedDashboardSnapshot } from '@/lib/get-dashboard-snapshot'
 import {
   BOOKING_EXPORT_PAGE_SIZE,
-  DASHBOARD_BOOKING_PAGE_SIZE_MAX,
-  DASHBOARD_BOOKING_SORT_COLUMNS,
-  type DashboardBookingPage,
+  assertEventCode,
+  normalizeBookingQuery,
   type DashboardBookingQuery,
 } from '@/lib/bookings-query'
+import { fetchBookingPage } from '@/lib/fetch-booking-page'
 import { createServiceClient, hasServiceRoleKey } from '@/lib/supabase-admin'
 import { createSupabaseServerClient } from '@/lib/supabase-server'
 import type { AttendeeName, BookingWithAttendees } from '@/types/database'
@@ -27,13 +27,6 @@ const freshSnapshotResults = new Map<
 >()
 const freshSnapshotLoads = new Map<EventCode, Promise<DashboardSnapshot>>()
 
-function assertEventCode(code: string): EventCode {
-  if (code !== 'CADCNX' && code !== 'CADNYE') {
-    throw new Error(`Invalid event code: ${code}`)
-  }
-  return code
-}
-
 /** Require a signed-in user before any dashboard data path (including service-role cache). */
 async function requireAuthenticatedUser() {
   const supabase = await createSupabaseServerClient()
@@ -42,56 +35,6 @@ async function requireAuthenticatedUser() {
     throw new Error('Unauthorized')
   }
   return supabase
-}
-
-function normalizeBookingQuery(input: DashboardBookingQuery): DashboardBookingQuery {
-  return {
-    eventCode: assertEventCode(input.eventCode),
-    pageIndex: Math.max(0, Math.floor(Number(input.pageIndex) || 0)),
-    pageSize: Math.min(
-      DASHBOARD_BOOKING_PAGE_SIZE_MAX,
-      Math.max(1, Math.floor(Number(input.pageSize) || 25))
-    ),
-    status: ['active', 'cancelled', 'all'].includes(input.status)
-      ? input.status
-      : 'active',
-    rsh: ['all', 'rsh', 'non-rsh'].includes(input.rsh) ? input.rsh : 'all',
-    eventDate: typeof input.eventDate === 'string' ? input.eventDate.trim() : '',
-    search: typeof input.search === 'string' ? input.search.trim().slice(0, 100) : '',
-    sortColumn: DASHBOARD_BOOKING_SORT_COLUMNS.includes(input.sortColumn)
-      ? input.sortColumn
-      : 'woo_id',
-    sortDesc: input.sortDesc !== false,
-  }
-}
-
-async function fetchBookingPage(
-  query: DashboardBookingQuery,
-  client: Awaited<ReturnType<typeof createSupabaseServerClient>>
-): Promise<DashboardBookingPage> {
-  const { data, error } = await client.rpc('cad_yip_booking_page', {
-    p_event_code: query.eventCode,
-    p_page_index: query.pageIndex,
-    p_page_size: query.pageSize,
-    p_status: query.status,
-    p_rsh: query.rsh,
-    p_event_date: query.eventDate || null,
-    p_search: query.search || null,
-    p_sort_column: query.sortColumn,
-    p_sort_desc: query.sortDesc,
-  })
-
-  if (error) throw error
-  if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    throw new Error('Booking page query returned invalid data.')
-  }
-
-  const page = data as { bookings?: BookingWithAttendees[]; total?: number }
-  return {
-    bookings: Array.isArray(page.bookings) ? page.bookings : [],
-    total: Number(page.total) || 0,
-    pageIndex: query.pageIndex,
-  }
 }
 
 async function loadFreshServiceDashboardSnapshot(
@@ -167,15 +110,10 @@ export async function loadFreshDashboardSnapshot(
 
 export async function loadDashboardBookingsPage(
   input: DashboardBookingQuery
-): Promise<DashboardBookingPage> {
+) {
   const userClient = await requireAuthenticatedUser()
-  const query = normalizeBookingQuery(input)
   const client = hasServiceRoleKey() ? createServiceClient() : userClient
-  const page = await fetchBookingPage(query, client)
-  const lastPageIndex = Math.max(0, Math.ceil(page.total / query.pageSize) - 1)
-  return query.pageIndex > lastPageIndex
-    ? fetchBookingPage({ ...query, pageIndex: lastPageIndex }, client)
-    : page
+  return fetchBookingPage(client, input)
 }
 
 export async function loadDashboardBookingExport(
@@ -189,8 +127,13 @@ export async function loadDashboardBookingExport(
   const base = normalizeBookingQuery(input)
   const client = hasServiceRoleKey() ? createServiceClient() : userClient
   const countPage = await fetchBookingPage(
-    { ...base, pageIndex: 0, pageSize: 1 },
-    client
+    client,
+    {
+      ...base,
+      pageIndex: 0,
+      pageSize: 1,
+    },
+    { pageSizeMax: BOOKING_EXPORT_PAGE_SIZE }
   )
   if (countPage.total > BOOKING_EXPORT_PAGE_SIZE) {
     throw new Error(`Export exceeds ${BOOKING_EXPORT_PAGE_SIZE} bookings.`)
@@ -199,8 +142,13 @@ export async function loadDashboardBookingExport(
     countPage.total <= 1
       ? countPage
       : await fetchBookingPage(
-          { ...base, pageIndex: 0, pageSize: BOOKING_EXPORT_PAGE_SIZE },
-          client
+          client,
+          {
+            ...base,
+            pageIndex: 0,
+            pageSize: BOOKING_EXPORT_PAGE_SIZE,
+          },
+          { pageSizeMax: BOOKING_EXPORT_PAGE_SIZE }
         )
   if (exportPage.total > BOOKING_EXPORT_PAGE_SIZE) {
     throw new Error(`Export exceeds ${BOOKING_EXPORT_PAGE_SIZE} bookings.`)
