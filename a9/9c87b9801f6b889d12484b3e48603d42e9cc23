@@ -1,0 +1,29 @@
+src/components/Dashboard.tsx
+  s_ca34ab6674a833::t_fb5f7080016e92 849-865
+  s_ca34ab6674a833::t_03a80a5e4f2a09 294-295
+  s_ca34ab6674a833::t_ee4163c4146c30 338-339
+  s_ca34ab6674a833::t_1a40ff12943cc4 257-260
+  s_ca34ab6674a833::t_ec0140295b9770 121-127
+  s_ca34ab6674a833::t_41a1ea815727cd 276-282,290
+  s_ca34ab6674a833::t_ee7eadab0b6aa8 366-373
+  s_ca34ab6674a833::t_213ae7625dd41c 287-289,291-293
+  s_ca34ab6674a833::t_161436ec524c02 308-317,347-351,355
+src/components/reui/data-grid/data-grid.tsx
+  s_ca34ab6674a833::t_14459220af4890 405-410,441
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a99c87b9801f6b889d12484b3e48603d42e9cc23",
+  "prompts": {},
+  "sessions": {
+    "s_ca34ab6674a833": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_f522483cdffe6pQKzxfvwJlrFC",
+        "model": "muse-spark-1.3-contributor-free"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
