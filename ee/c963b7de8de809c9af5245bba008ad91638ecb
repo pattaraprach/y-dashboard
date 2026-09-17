@@ -1,0 +1,19 @@
+supabase/migrations/20260917140000_booking_search_index_corrections.sql
+  s_ca34ab6674a833::t_b92725042ea72c 1-197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "eec963b7de8de809c9af5245bba008ad91638ecb",
+  "prompts": {},
+  "sessions": {
+    "s_ca34ab6674a833": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_f522483cdffe6pQKzxfvwJlrFC",
+        "model": "muse-spark-1.3-contributor-free"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
