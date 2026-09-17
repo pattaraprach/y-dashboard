@@ -1,0 +1,35 @@
+src/components/Dashboard.tsx
+  s_ca34ab6674a833::t_d136e3e4448279 239-246,249
+  s_ca34ab6674a833::t_0793a46797a62d 273,275-282,287
+  s_ca34ab6674a833::t_8b74ab8e511c11 288,361-362,366-373,375-382,385-387,389-398,400,405-411,415
+  s_ca34ab6674a833::t_cc3921dfbd8556 383-384,388
+  s_ca34ab6674a833::t_5ee32271dbcd1c 620-634
+  s_ca34ab6674a833::t_b96626be90df10 231-236
+  s_ca34ab6674a833::t_acdaa873a14ff8 247-248
+  s_ca34ab6674a833::t_b14065b1b1af55 254-259
+  s_ca34ab6674a833::t_1459439185a8e2 228-230
+  s_ca34ab6674a833::t_e712668487aaec 237-238
+  s_ca34ab6674a833::t_36abd509168089 250-253
+  s_ca34ab6674a833::t_ac93f63b1f0329 260-262,270-272
+  s_ca34ab6674a833::t_a51d205386a1b3 274
+  s_ca34ab6674a833::t_1ac0602ae1cf67 283-286
+  s_ca34ab6674a833::t_28acae24f0d99c 289-291
+supabase/migrations/20260917130000_drop_duplicate_woo_id_index.sql
+  s_ca34ab6674a833::t_4f4095105763e6 1-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "d5ffb8c3cf633f96707c50eb3000ffdc3090966f",
+  "prompts": {},
+  "sessions": {
+    "s_ca34ab6674a833": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_f522483cdffe6pQKzxfvwJlrFC",
+        "model": "muse-spark-1.3-contributor-free"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
