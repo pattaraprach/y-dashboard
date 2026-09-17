@@ -1,0 +1,32 @@
+src/components/Dashboard.tsx
+  s_ca34ab6674a833::t_d2b3c2a666efec 119-120
+  s_ca34ab6674a833::t_6359f3388b9ed5 358,368,373,378,388,393
+  s_ca34ab6674a833::t_12d1ad70434262 159-178
+  s_ca34ab6674a833::t_d7575f1893b539 497-502,510,513
+  s_ca34ab6674a833::t_f20d53efd8f104 432
+  s_ca34ab6674a833::t_282f368ddf9f79 527,530,533-554
+  s_ca34ab6674a833::t_658a5fd35d34fe 287,299-301,311-312,323
+  s_ca34ab6674a833::t_040326e3cbd2df 342-345
+  s_ca34ab6674a833::t_2a5656113ce95f 687,689,691-694,697
+  s_ca34ab6674a833::t_3f9d6a73ae6933 201-208
+  s_ca34ab6674a833::t_b698f1ce7645f4 555
+supabase/migrations/20260917120000_speed_up_booking_page_search.sql
+  s_ca34ab6674a833::t_6865b7acdf519b 5-11,17-23,32-40
+  s_ca34ab6674a833::t_ed8be033b0e3f7 118-127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "58f24bbe82d45d9dcac0edb912432b0c8395b274",
+  "prompts": {},
+  "sessions": {
+    "s_ca34ab6674a833": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_f522483cdffe6pQKzxfvwJlrFC",
+        "model": "muse-spark-1.3-contributor-free"
+      },
+      "human_author": "pattara <pattaraprach@gmail.com>"
+    }
+  }
+}
