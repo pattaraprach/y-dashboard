@@ -2,33 +2,42 @@
 -- the page function counted the filtered set in a second pass. Trigram indexes
 -- make contains-search indexable; MATERIALIZED keeps the count on one scan.
 --
+-- NOTE: the search blob must stay an immutable expression (plain || chains,
+-- never concat_ws/concat which are STABLE and PostgreSQL rejects in index
+-- expressions) and must stay textually identical between the GIN index below
+-- and the predicate in cad_yip_booking_page, or the planner will not use it.
+-- event_date uses the immutable cad_yip_date_stamp helper because date::text
+-- is STABLE (DateStyle-dependent) for the same reason.
+--
 -- Rollback: migrations are forward-only. Add a new migration to drop these
 -- indexes and restore the prior cad_yip_booking_page body if required.
 
 create extension if not exists pg_trgm with schema extensions;
 
+create or replace function public.cad_yip_date_stamp(d date)
+returns text
+language sql
+immutable
+set search_path = ''
+as $$ select case when d is null then '' else to_char(d, 'YYYY-MM-DD') end $$;
+
 create index if not exists cad_yip_bookings_sku_trgm
   on public.cad_yip_bookings
   using gin (sku extensions.gin_trgm_ops);
-
-create index if not exists cad_yip_bookings_woo_id_idx
-  on public.cad_yip_bookings (woo_id);
 
 create index if not exists cad_yip_bookings_search_trgm
   on public.cad_yip_bookings
   using gin (
     (
-      concat_ws(
-        ' ',
-        woo_id::text,
-        firstname,
-        lastname,
-        email,
-        seat,
-        pickup_loc,
-        zone_code,
-        zone
-      )
+      coalesce(woo_id::text, '') || ' ' ||
+      coalesce(firstname, '') || ' ' ||
+      coalesce(lastname, '') || ' ' ||
+      coalesce(email, '') || ' ' ||
+      coalesce(seat, '') || ' ' ||
+      coalesce(pickup_loc, '') || ' ' ||
+      public.cad_yip_date_stamp(event_date) || ' ' ||
+      coalesce(zone_code, '') || ' ' ||
+      coalesce(zone, '')
     ) extensions.gin_trgm_ops
   );
 
@@ -106,16 +115,16 @@ begin
         and (
           v_search = ''
           or (v_woo_id is not null and b.woo_id = v_woo_id)
-          or concat_ws(
-            ' ',
-            b.woo_id::text,
-            b.firstname,
-            b.lastname,
-            b.email,
-            b.seat,
-            b.pickup_loc,
-            b.zone_code,
-            b.zone
+          or (
+            coalesce(b.woo_id::text, '') || ' ' ||
+            coalesce(b.firstname, '') || ' ' ||
+            coalesce(b.lastname, '') || ' ' ||
+            coalesce(b.email, '') || ' ' ||
+            coalesce(b.seat, '') || ' ' ||
+            coalesce(b.pickup_loc, '') || ' ' ||
+            public.cad_yip_date_stamp(b.event_date) || ' ' ||
+            coalesce(b.zone_code, '') || ' ' ||
+            coalesce(b.zone, '')
           ) ilike '%' || v_search || '%' escape E'\\'
         )
     ),
