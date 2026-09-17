@@ -860,7 +860,9 @@ export default function Dashboard({
                   )}
                   role="status"
                 >
-                  <Spinner className="size-3" />
+                  {/* Decorative next to the Updating text: hide from AT so
+                      the status isn't announced twice. */}
+                  <Spinner className="size-3" aria-hidden="true" />
                   Updating…
                 </span>
               </p>
